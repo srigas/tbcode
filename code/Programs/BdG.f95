@@ -18,34 +18,16 @@ program TB
 	
     chempot = 0.0 ! Set to zero by default because we want to study superconductivity
 
-    ! Setting the Pauli matrices !
-    ! -------------------------------------------------
-    IdentityPauli(1,1) = (1.0,0.0)
-    IdentityPauli(1,2) = (0.0,0.0)
-    IdentityPauli(2,1) = (0.0,0.0)
-    IdentityPauli(2,2) = (1.0,0.0)
-    xPauli(1,1) = (0.0,0.0)
-    xPauli(1,2) = (1.0,0.0)
-    xPauli(2,1) = (1.0,0.0)
-    xPauli(2,2) = (0.0,0.0)
-    yPauli(1,1) = (0.0,0.0)
-    yPauli(1,2) = (0.0,-1.0)
-    yPauli(2,1) = (0.0,1.0)
-    yPauli(2,2) = (0.0,0.0)
-    zPauli(1,1) = (1.0,0.0)
-    zPauli(1,2) = (0.0,0.0)
-    zPauli(2,1) = (0.0,0.0)
-    zPauli(2,2) = (-1.0,0.0)
-    ! -------------------------------------------------
+    call PAULI(IdentityPauli,xPauli,yPauli,zPauli) ! Sets the Pauli matrices
 
     open(10, file = 'config.dat', action = 'read')
     read(10,*) a_1
     read(10,*) a_2
     read(10,*) a_3
     read(10,*) NUMKX,NUMKY,NUMKZ
-    read(10,*) RMAX
-    read(10,*) R0
-    read(10,*) NCELLS
+    read(10,*) RMAX ! To determine nearest neighbours
+    read(10,*) R0 ! Constant at the exponential of the hopping element
+    read(10,*) NCELLS ! NCELLS creates a (2NCELLS+1)^3 mini-cube from there the lattice points are used to determine neighbours
     close(10)
 
     if (DOT_PRODUCT(a_1,a_2) /= 0 .or. DOT_PRODUCT(a_1,a_3) /= 0 .or. DOT_PRODUCT(a_2,a_3) /= 0 .or. RMAX < 0 .or. R0 <= 0 &
@@ -225,7 +207,7 @@ program TB
             diffD(i) = abs(abs(newDELTA(i)) - abs(DELTA(i)))
 
         end do
-		
+
         DELTA = (1.0 - mixfactorD)*DELTA + mixfactorD*newDELTA
         nu = (1.0 - mixfactorN)*nu + mixfactorN*newnu
         reps = reps + 1
@@ -536,6 +518,29 @@ program TB
         end do
                 
     end subroutine RPTS
+
+    subroutine PAULI(s_0,s_1,s_2,s_3) ! Sets the Pauli matrices, where s_0 = Identity
+        implicit none
+        complex*16 :: s_0(2,2), s_1(2,2), s_2(2,2), s_3(2,2)
+        
+        s_0(1,1) = (1.0,0.0)
+        s_0(1,2) = (0.0,0.0)
+        s_0(2,1) = (0.0,0.0)
+        s_0(2,2) = (1.0,0.0)
+        s_1(1,1) = (0.0,0.0)
+        s_1(1,2) = (1.0,0.0)
+        s_1(2,1) = (1.0,0.0)
+        s_1(2,2) = (0.0,0.0)
+        s_2(1,1) = (0.0,0.0)
+        s_2(1,2) = (0.0,-1.0)
+        s_2(2,1) = (0.0,1.0)
+        s_2(2,2) = (0.0,0.0)
+        s_3(1,1) = (1.0,0.0)
+        s_3(1,2) = (0.0,0.0)
+        s_3(2,1) = (0.0,0.0)
+        s_3(2,2) = (-1.0,0.0)
+
+    end subroutine PAULI
 
     function CROSS_PRODUCT(x,y) result(cross)
         implicit none
