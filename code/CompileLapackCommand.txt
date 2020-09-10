@@ -1,7 +1,0 @@
-gfortran BdG.f95 -L/usr/lib/x86_64-linux-gnu/lapack -fcheck=bounds -llapack -o bdg
-
-gfortran TBSPIN.f95 -L/usr/lib/x86_64-linux-gnu/lapack -llapack -o TBSPIN
-
-gfortran test.f95 -L/usr/lib/x86_64-linux-gnu/lapack -llapack -o test
-
-gfortran TBSPINchain.f95 -L/usr/lib/x86_64-linux-gnu/lapack -llapack -o TBchain
