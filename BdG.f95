@@ -16,7 +16,7 @@ program TB
 
     CI = (0.0,1.0) ! setting the imaginary unit
 	
-    chempot = 0.0 ! Set to zero by default because we want to study superconductivity
+    chempot = 0.0 ! Set to zero for now, but later we may need to alter it
 
     call PAULI(IdentityPauli,xPauli,yPauli,zPauli) ! Sets the Pauli matrices
 
@@ -340,7 +340,7 @@ program TB
         complex*16 :: zPauli(2,2),IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, DELTA(NUMT)
 
         if (norm2(TTPRIME) == 0.0) then ! This case corresponds to t = t', R = 0
-            positionhamiltonian = (E0(j) - chempot + ULCN(j)*(nu(j) - nuzero(j)))*IdentityPauli - BETA(j)*zPauli
+            positionhamiltonian = (E0(j) - chempot + ULCN(j)*((nu(j) - nuzero(j))**2))*IdentityPauli - BETA(j)*zPauli
             deltaterm = DELTA(j) ! This ensures on-site superconducting pairing (s-wave superconductivity)
         else if (norm2(TTPRIME) < RMAX) then
             positionhamiltonian = (exp((-1)*norm2(TTPRIME)/R0))*IdentityPauli
