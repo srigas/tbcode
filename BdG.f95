@@ -15,7 +15,7 @@ program TB
 
     CI = (0.0,1.0) ! setting the imaginary unit
 	
-    chempot = 0.0 ! Set to zero by default because we want to study superconductivity
+    chempot = 0.0 ! Set to zero for now, but later we may need to alter it
 
     call PAULI(IdentityPauli,xPauli,yPauli,zPauli) ! Sets the Pauli matrices
 
@@ -127,8 +127,8 @@ program TB
             KPOINT = KPTS(1:3,kcounter)
 
 			! This loop sets all initial values of H to zero, so that the sum afterwords can work
-            do i = 1, 4*NUMT
-                do j = 1, 4*NUMT
+            do j = 1, 4*NUMT
+                do i = 1, 4*NUMT
                     HAMILTONIAN(i,j) = (0.0,0.0)
                 end do
             end do
@@ -138,7 +138,7 @@ program TB
 
             call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
 
-			! The eigenvectors are in the form of 4-spinors: (u-up, u-down, v-up, v-down)
+			! The eigenvectors are in the form of 4-spinors: (u↑, u↓, v↑, v↓)
 
             ini = (kcounter-1)*4*NUMT + 1 ! The *4 factors are due spin and particle-hole
             fin = kcounter*4*NUMT ! The *4 factors are due spin and particle-hole
