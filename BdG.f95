@@ -1,14 +1,13 @@
 program TB
     implicit none
-    real*8 :: a_1(3), a_2(3), a_3(3), RMAX, R0, TTPRIME(3), KPOINT(3), RPOINT(3), epsilon, min_val, max_val, mixfactorN, &
+    real*8 :: a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
 	&chempot, mixfactorD, readcharge
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
-    complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), positionhamiltonian(2,2), expon, deltaterm, &
-    & readdelta
+    complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), readdelta
     integer, allocatable, dimension(:) :: multiplicity
     real*8, allocatable, dimension(:,:) :: intnumdensity, numdensity, numdensityperatom
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
@@ -16,7 +15,7 @@ program TB
 
     CI = (0.0,1.0) ! setting the imaginary unit
 	
-    chempot = 0.0 ! Set to zero for now, but later we may need to alter it
+    chempot = 0.0 ! Set to zero by default because we want to study superconductivity
 
     call PAULI(IdentityPauli,xPauli,yPauli,zPauli) ! Sets the Pauli matrices
 
@@ -134,41 +133,8 @@ program TB
                 end do
             end do
 
-			! This begins the construction of H(k) for the specific k-point
-            do i = 1, NUMT
-                do j = 1, NUMT
-                    
-                    TTPRIME = TPTS(1:3,j) - TPTS(1:3,i) ! This calculates t - t' for the basis atoms
-                    do IRLATT = 1, IRLATTMAX ! This is the summation over all lattice points
-                        RPOINT = RLATT(1:3,IRLATT)
-                        call HAM(zPauli,IdentityPauli,chempot,RPOINT + TTPRIME,NUMT,E0,j,&
-                        &R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,positionhamiltonian,deltaterm) ! Calls h(r-r')
-                        expon = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT)) ! The e^(-ikr) factor
-
-						! This is practically the Fourier transform of h(r-r') to H(k)
-
-                        HAMILTONIAN(i,j) = HAMILTONIAN(i,j) + expon*positionhamiltonian(1,1) ! 1-1 block
-                        HAMILTONIAN(i,j+NUMT) = HAMILTONIAN(i,j+NUMT) + expon*positionhamiltonian(1,2) ! 1-2 block, for spinup-spindown interactions
-						! HAMILTONIAN(i,j+2*NUMT), i.e. the 1-3 block, remains zero in any case
-                        HAMILTONIAN(i,j+3*NUMT) = HAMILTONIAN(i,j+3*NUMT) + expon*deltaterm ! 1-4 block, the superconductivity pairing
-
-                        HAMILTONIAN(i+NUMT,j) = HAMILTONIAN(i+NUMT,j) + expon*positionhamiltonian(2,1) ! 2-1 block, for spindown-spinup interactions
-                        HAMILTONIAN(i+NUMT,j+NUMT) = HAMILTONIAN(i+NUMT,j+NUMT) + expon*positionhamiltonian(2,2) ! 2-2 block
-                        HAMILTONIAN(i+NUMT,j+2*NUMT) = HAMILTONIAN(i+NUMT,j+2*NUMT) + expon*deltaterm ! 2-3 block, the superconductivity pairing
-						! HAMILTONIAN(i+NUMT,j+3*NUMT), i.e. the 2-4 block, remains zero in any case
-
-						! HAMILTONIAN(i+2*NUMT,j), i.e. the 3-1 block, remains zero in any case
-                        HAMILTONIAN(i+2*NUMT,j+NUMT) = HAMILTONIAN(i+2*NUMT,j+NUMT) + expon*CONJG(deltaterm) ! 3-2 block, the complex conjugate of the superconductivity pairing
-                        HAMILTONIAN(i+2*NUMT,j+2*NUMT) = HAMILTONIAN(i+2*NUMT,j+2*NUMT) - expon*CONJG(positionhamiltonian(1,1)) ! 3-3 block
-                        HAMILTONIAN(i+2*NUMT,j+3*NUMT) = HAMILTONIAN(i+2*NUMT,j+3*NUMT) + expon*CONJG(positionhamiltonian(1,2)) ! 3-4 block, for spinup-spindown interactions
-
-                        HAMILTONIAN(i+3*NUMT,j) = HAMILTONIAN(i+3*NUMT,j) + expon*CONJG(deltaterm) ! 4-1 block, the complex conjugate of the superconductivity pairing
-						! HAMILTONIAN(i+3*NUMT,j+NUMT), i.e. the 4-2 block, remains zero in any case
-                        HAMILTONIAN(i+3*NUMT,j+2*NUMT) = HAMILTONIAN(i+3*NUMT,j+2*NUMT) + expon*CONJG(positionhamiltonian(2,1)) ! 4-3 block, for spindown-spinup interactions
-                        HAMILTONIAN(i+3*NUMT,j+3*NUMT) = HAMILTONIAN(i+3*NUMT,j+3*NUMT) - expon*CONJG(positionhamiltonian(2,2)) ! 4-4 block
-                    end do
-                end do
-            end do
+            call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
+            &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN)
 
             call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
 
@@ -219,46 +185,14 @@ program TB
         KPOINT = KPTS(1:3,kcounter)
 
 		! This loop sets all initial values of H to zero, so that the sum afterwords can work
-        do i = 1, 4*NUMT
-            do j = 1, 4*NUMT
+        do j = 1, 4*NUMT
+            do i = 1, 4*NUMT
                 HAMILTONIAN(i,j) = (0.0,0.0)
             end do
         end do
 
-        do i = 1, NUMT
-            do j = 1, NUMT
-				
-                TTPRIME = TPTS(1:3,j) - TPTS(1:3,i) ! This calculates t - t' for the basis atoms
-                do IRLATT = 1, IRLATTMAX ! This is the summation over all lattice points
-                    RPOINT = RLATT(1:3,IRLATT)
-                    call HAM(zPauli,IdentityPauli,chempot,RPOINT + TTPRIME,NUMT,E0,j,&
-                    &R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,positionhamiltonian,deltaterm) ! Calls h(r-r')
-                    expon = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT)) ! The e^(-ikr) factor
-
-					! This is practically the Fourier transform of h(r-r') to H(k)
-
-                    HAMILTONIAN(i,j) = HAMILTONIAN(i,j) + expon*positionhamiltonian(1,1) ! 1-1 block
-                    HAMILTONIAN(i,j+NUMT) = HAMILTONIAN(i,j+NUMT) + expon*positionhamiltonian(1,2) ! 1-2 block, for spinup-spindown interactions
-                    ! HAMILTONIAN(i,j+2*NUMT), i.e. the 1-3 block, remains zero in any case
-                    HAMILTONIAN(i,j+3*NUMT) = HAMILTONIAN(i,j+3*NUMT) + expon*deltaterm ! 1-4 block, the superconductivity pairing
-
-                    HAMILTONIAN(i+NUMT,j) = HAMILTONIAN(i+NUMT,j) + expon*positionhamiltonian(2,1) ! 2-1 block, for spindown-spinup interactions
-                    HAMILTONIAN(i+NUMT,j+NUMT) = HAMILTONIAN(i+NUMT,j+NUMT) + expon*positionhamiltonian(2,2) ! 2-2 block
-                    HAMILTONIAN(i+NUMT,j+2*NUMT) = HAMILTONIAN(i+NUMT,j+2*NUMT) + expon*deltaterm ! 2-3 block, the superconductivity pairing
-                    ! HAMILTONIAN(i+NUMT,j+3*NUMT), i.e. the 2-4 block, remains zero in any case
-
-                    ! HAMILTONIAN(i+2*NUMT,j), i.e. the 3-1 block, remains zero in any case
-                    HAMILTONIAN(i+2*NUMT,j+NUMT) = HAMILTONIAN(i+2*NUMT,j+NUMT) + expon*CONJG(deltaterm) ! 3-2 block, the complex conjugate of the superconductivity pairing
-                    HAMILTONIAN(i+2*NUMT,j+2*NUMT) = HAMILTONIAN(i+2*NUMT,j+2*NUMT) - expon*CONJG(positionhamiltonian(1,1)) ! 3-3 block
-                    HAMILTONIAN(i+2*NUMT,j+3*NUMT) = HAMILTONIAN(i+2*NUMT,j+3*NUMT) + expon*CONJG(positionhamiltonian(1,2)) ! 3-4 block, for spinup-spindown interactions
-
-                    HAMILTONIAN(i+3*NUMT,j) = HAMILTONIAN(i+3*NUMT,j) + expon*CONJG(deltaterm) ! 4-1 block, the complex conjugate of the superconductivity pairing
-                    ! HAMILTONIAN(i+3*NUMT,j+NUMT), i.e. the 4-2 block, remains zero in any case
-                    HAMILTONIAN(i+3*NUMT,j+2*NUMT) = HAMILTONIAN(i+3*NUMT,j+2*NUMT) + expon*CONJG(positionhamiltonian(2,1)) ! 4-3 block, for spindown-spinup interactions
-                    HAMILTONIAN(i+3*NUMT,j+3*NUMT) = HAMILTONIAN(i+3*NUMT,j+3*NUMT) - expon*CONJG(positionhamiltonian(2,2)) ! 4-4 block
-                end do
-            end do
-        end do
+        call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
+        &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN)
 
         call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
 
@@ -331,24 +265,61 @@ program TB
 	! manually handle how the 4*NUMT*4*NUMT Hamiltonian comes out. If we want a non-hand-fixed result, we should
 	! introduce 4x4 matrices, which are direct products of Pauli matrices in spin and particle-hole space.
 
-    subroutine HAM(zPauli,IdentityPauli,chempot,TTPRIME,NUMT,E0,j,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,positionhamiltonian,deltaterm)
+    subroutine HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,&
+        &KPOINT,HAMILTONIAN)
         implicit none
-        real*8, intent(in) :: TTPRIME(3)
-        real*8 :: R0, RMAX, chempot
-        integer :: NUMT, j
-        real*8 :: E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT)
-        complex*16 :: zPauli(2,2),IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, DELTA(NUMT)
+        real*8, intent(in) :: KPOINT(3)
+        real*8 :: R0, RMAX, chempot, RPOINT(3)
+        integer :: NUMT, i, j, IRLATT, IRLATTMAX
+        real*8 :: E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), TTPRIME(3), TPTS(3,NUMT), RLATT(3,IRLATTMAX)
+        complex*16 :: zPauli(2,2), IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, DELTA(NUMT),&
+        &expon, HAMILTONIAN(4*NUMT,4*NUMT)
+		
+		do i = 1, NUMT
+			do j = 1, NUMT
+			
+				TTPRIME = TPTS(1:3,j) - TPTS(1:3,i) ! This calculates t - t' for the basis atoms
+				do IRLATT = 1, IRLATTMAX ! This is the summation over all latice points
+					RPOINT = RLATT(1:3,IRLATT)
 
-        if (norm2(TTPRIME) == 0.0) then ! This case corresponds to t = t', R = 0
-            positionhamiltonian = (E0(j) - chempot + ULCN(j)*((nu(j) - nuzero(j))**2))*IdentityPauli - BETA(j)*zPauli
-            deltaterm = DELTA(j) ! This ensures on-site superconducting pairing (s-wave superconductivity)
-        else if (norm2(TTPRIME) < RMAX) then
-            positionhamiltonian = (exp((-1)*norm2(TTPRIME)/R0))*IdentityPauli
-            deltaterm = (0.0,0.0) ! This ensures on-site superconducting pairing (s-wave superconductivity)
-        else
-            positionhamiltonian = (0.0,0.0)
-            deltaterm = (0.0,0.0) ! This ensures on-site superconducting pairing (s-wave superconductivity)
-        endif
+					! These construct h(r-r')
+					if (norm2(RPOINT+TTPRIME) == 0.0) then ! This case corresponds to t = t', R = 0
+						positionhamiltonian = (E0(j) - chempot + ULCN(j)*(nu(j) - nuzero(j)))*IdentityPauli - BETA(j)*zPauli
+						deltaterm = DELTA(j) ! This ensures on-site superconducting pairing (s-wave superconductivity)
+					else if (norm2(RPOINT+TTPRIME) < RMAX) then
+						positionhamiltonian = (exp((-1)*norm2(RPOINT+TTPRIME)/R0))*IdentityPauli ! Hopping
+						deltaterm = (0.0,0.0) ! This ensures on-site superconducting pairing (s-wave superconductivity)
+					else
+						positionhamiltonian = 0.0*IdentityPauli
+						deltaterm = (0.0,0.0) ! This ensures on-site superconducting pairing (s-wave superconductivity)
+					endif
+					
+					expon = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT)) ! The e^(-ikr) factor
+					
+					! And now follows the Fourier transform of h(r-r') to H(k)
+					
+					HAMILTONIAN(i,j) = HAMILTONIAN(i,j) + expon*positionhamiltonian(1,1) ! 1-1 block
+                    HAMILTONIAN(i,j+NUMT) = HAMILTONIAN(i,j+NUMT) + expon*positionhamiltonian(1,2) ! 1-2 block, for spinup-spindown interactions
+					! HAMILTONIAN(i,j+2*NUMT), i.e. the 1-3 block, remains zero in any case
+                    HAMILTONIAN(i,j+3*NUMT) = HAMILTONIAN(i,j+3*NUMT) + expon*deltaterm ! 1-4 block, the superconductivity pairing
+
+                    HAMILTONIAN(i+NUMT,j) = HAMILTONIAN(i+NUMT,j) + expon*positionhamiltonian(2,1) ! 2-1 block, for spindown-spinup interactions
+                    HAMILTONIAN(i+NUMT,j+NUMT) = HAMILTONIAN(i+NUMT,j+NUMT) + expon*positionhamiltonian(2,2) ! 2-2 block
+                    HAMILTONIAN(i+NUMT,j+2*NUMT) = HAMILTONIAN(i+NUMT,j+2*NUMT) + expon*deltaterm ! 2-3 block, the superconductivity pairing
+					! HAMILTONIAN(i+NUMT,j+3*NUMT), i.e. the 2-4 block, remains zero in any case
+
+					! HAMILTONIAN(i+2*NUMT,j), i.e. the 3-1 block, remains zero in any case
+                    HAMILTONIAN(i+2*NUMT,j+NUMT) = HAMILTONIAN(i+2*NUMT,j+NUMT) + expon*CONJG(deltaterm) ! 3-2 block, the complex conjugate of the superconductivity pairing
+                    HAMILTONIAN(i+2*NUMT,j+2*NUMT) = HAMILTONIAN(i+2*NUMT,j+2*NUMT) - expon*CONJG(positionhamiltonian(1,1)) ! 3-3 block
+                    HAMILTONIAN(i+2*NUMT,j+3*NUMT) = HAMILTONIAN(i+2*NUMT,j+3*NUMT) + expon*CONJG(positionhamiltonian(1,2)) ! 3-4 block, for spinup-spindown interactions
+
+                    HAMILTONIAN(i+3*NUMT,j) = HAMILTONIAN(i+3*NUMT,j) + expon*CONJG(deltaterm) ! 4-1 block, the complex conjugate of the superconductivity pairing
+					! HAMILTONIAN(i+3*NUMT,j+NUMT), i.e. the 4-2 block, remains zero in any case
+                    HAMILTONIAN(i+3*NUMT,j+2*NUMT) = HAMILTONIAN(i+3*NUMT,j+2*NUMT) + expon*CONJG(positionhamiltonian(2,1)) ! 4-3 block, for spindown-spinup interactions
+                    HAMILTONIAN(i+3*NUMT,j+3*NUMT) = HAMILTONIAN(i+3*NUMT,j+3*NUMT) - expon*CONJG(positionhamiltonian(2,2)) ! 4-4 block
+				end do
+			end do
+		end do
     end subroutine HAM
 
     subroutine INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
