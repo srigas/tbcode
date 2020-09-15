@@ -155,12 +155,12 @@ program TB
             newDELTA(i) = (0.0,0.0)
 
             do j = 1, 4*NUMT*NUMK
-                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,chempot)*abs(EIGENVECTORS(i,j))**2
+                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T)*abs(EIGENVECTORS(i,j))**2
 
-                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,chempot)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T)*abs(EIGENVECTORS(3*NUMT+i,j))**2
 
                 newDELTA(i) = newDELTA(i) -&
-                & FERMI(EIGENVALUES(j),T,chempot)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+                & FERMI(EIGENVALUES(j),T)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
             end do
 
             newnu(i) = nuup(i) + nudown(i) ! This is the density of the i-th atom
@@ -209,12 +209,12 @@ program TB
         magnet(i) = 0.0
 
         do j = 1, 4*NUMT*NUMK
-            nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,chempot)*abs(EIGENVECTORS(i,j))**2
+            nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T)*abs(EIGENVECTORS(i,j))**2
 
-            nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,chempot)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+            nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T)*abs(EIGENVECTORS(3*NUMT+i,j))**2
 
             newDELTA(i) = newDELTA(i) -&
-            & FERMI(EIGENVALUES(j),T,chempot)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+            & FERMI(EIGENVALUES(j),T)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
         end do
 
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
@@ -509,21 +509,21 @@ program TB
 
     end subroutine PAULI
 
-    function FERMI(E,T,chempot) result(fE)
+    function FERMI(E,T) result(fE) ! The chempot here corresponds to the quasiparticles and is thus 0
         implicit none
-        real*8, intent(in) :: E, T, chempot
+        real*8, intent(in) :: E, T
         real*8 :: fE, K_B, expon
         
         K_B = 8.617385D-5 ! In eVs, change if necessary
 
         if (T == 0.0) then
-            if (E-chempot < 0.0) then
+            if (E < 0.0) then
                 fE = 1.0
             else
                 fE = 0.0
             endif
         else
-            expon = exp((E-chempot)/(K_B*T))
+            expon = exp(E/(K_B*T))
             fE = 1.0/(expon+1.0)
         endif
 		
