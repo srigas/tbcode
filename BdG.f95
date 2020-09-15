@@ -30,7 +30,7 @@ program TB
     close(10)
 
     if (DOT_PRODUCT(a_1,a_2) /= 0 .or. DOT_PRODUCT(a_1,a_3) /= 0 .or. DOT_PRODUCT(a_2,a_3) /= 0 .or. RMAX < 0 .or. R0 <= 0 &
-	& .or. NCELLS < 0) then
+	& .or. NCELLS < 0 .or. T < 0.0) then
         print *, 'A value inserted in config.dat is incorrect. Please try again after everything has been corrected.'
         call exit(123)
     endif
@@ -526,12 +526,9 @@ program TB
             else
                 fE = 0.0
             endif
-        else if (T > 0.0) then
+        else
             expon = exp((E-chempot)/(K_B*T))
             fE = 1.0/(expon+1.0)
-        else
-            print *, 'The temperature cannot be negative. Please try again with a different value.'
-        call exit(123)
         endif
 		
     end function FERMI
