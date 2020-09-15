@@ -155,14 +155,12 @@ program TB
             newDELTA(i) = (0.0,0.0)
 
             do j = 1, 4*NUMT*NUMK
-                if (EIGENVALUES(j) > chempot) then ! This is now the "Fermi condition"
-                    nuup(i) = nuup(i) + abs(EIGENVECTORS(2*NUMT+i,j))**2
+                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,chempot)*abs(EIGENVECTORS(i,j))**2
 
-                    nudown(i) = nudown(i) + abs(EIGENVECTORS(3*NUMT+i,j))**2
+                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,chempot)*abs(EIGENVECTORS(3*NUMT+i,j))**2
 
-                    newDELTA(i) = newDELTA(i) + 0.5*USUPCOND(i)*( EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j)) +&
-					& EIGENVECTORS(NUMT+i,j)*CONJG(EIGENVECTORS(2*NUMT+i,j)) )
-                endif
+                newDELTA(i) = newDELTA(i) -&
+                & FERMI(EIGENVALUES(j),T,chempot)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
             end do
 
             newnu(i) = nuup(i) + nudown(i) ! This is the density of the i-th atom
@@ -211,14 +209,12 @@ program TB
         magnet(i) = 0.0
 
         do j = 1, 4*NUMT*NUMK
-            if (EIGENVALUES(j) > chempot) then
-                nuup(i) = nuup(i) + abs(EIGENVECTORS(2*NUMT+i,j))**2
-                    
-                nudown(i) = nudown(i) + abs(EIGENVECTORS(3*NUMT+i,j))**2
+            nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,chempot)*abs(EIGENVECTORS(i,j))**2
 
-                newDELTA(i) = newDELTA(i) + 0.5*USUPCOND(i)*( EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j)) +&
-				& EIGENVECTORS(NUMT+i,j)*CONJG(EIGENVECTORS(2*NUMT+i,j)) )
-            endif
+            nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,chempot)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+
+            newDELTA(i) = newDELTA(i) -&
+            & FERMI(EIGENVALUES(j),T,chempot)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
         end do
 
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
