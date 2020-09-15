@@ -1,7 +1,7 @@
 program TB
     implicit none
     real*8 :: a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
-	&chempot, mixfactorD, readcharge
+	&chempot, mixfactorD, readcharge, fE, T
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT
@@ -14,8 +14,6 @@ program TB
 	& maxreps, uniquecounter
 
     CI = (0.0,1.0) ! setting the imaginary unit
-	
-    chempot = 0.0 ! Set to zero for now, but later we may need to alter it
 
     call PAULI(IdentityPauli,xPauli,yPauli,zPauli) ! Sets the Pauli matrices
 
@@ -27,6 +25,8 @@ program TB
     read(10,*) RMAX ! To determine nearest neighbours
     read(10,*) R0 ! Constant at the exponential of the hopping element
     read(10,*) NCELLS ! NCELLS creates a (2NCELLS+1)^3 mini-cube from there the lattice points are used to determine neighbours
+    read(10,*) chempot ! the chemical potential is inserted through config.dat
+    read(10,*) T ! the system's temperature. Default: 0.0
     close(10)
 
     if (DOT_PRODUCT(a_1,a_2) /= 0 .or. DOT_PRODUCT(a_1,a_3) /= 0 .or. DOT_PRODUCT(a_2,a_3) /= 0 .or. RMAX < 0 .or. R0 <= 0 &
@@ -512,6 +512,29 @@ program TB
         s_3(2,2) = (-1.0,0.0)
 
     end subroutine PAULI
+
+    function FERMI(E,T,chempot) result(fE)
+        implicit none
+        real*8, intent(in) :: E, T, chempot
+        real*8 :: fE, K_B, expon
+        
+        K_B = 8.617385D-5 ! In eVs, change if necessary
+
+        if (T == 0.0) then
+            if (E-chempot < 0.0) then
+                fE = 1.0
+            else
+                fE = 0.0
+            endif
+        else if (T > 0.0) then
+            expon = exp((E-chempot)/(K_B*T))
+            fE = 1.0/(expon+1.0)
+        else
+            print *, 'The temperature cannot be negative. Please try again with a different value.'
+        call exit(123)
+        endif
+		
+    end function FERMI
 
     function CROSS_PRODUCT(x,y) result(cross)
         implicit none
