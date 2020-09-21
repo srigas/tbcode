@@ -290,7 +290,7 @@ program TB
 						deltaterm = (0.0,0.0) ! This ensures on-site superconducting pairing (s-wave superconductivity)
 					endif
 					
-					expon = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT)) ! The e^(-ikr) factor
+					expon = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT+TTPRIME)) ! The e^[-ik(R+t-t')] factor
 					
 					! And now follows the Fourier transform of h(r-r') to H(k)
 					
