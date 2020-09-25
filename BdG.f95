@@ -252,11 +252,7 @@ program TB
 
 	!------------------------------------------------------------------------------------------------------------------
 
-    ! ------------------- GREEN'S FUNCTION -----------------
-
-
-
-    ! ------------------------------------------------------
+    ! call GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
 
     contains
 
@@ -322,7 +318,113 @@ program TB
 		end do
     end subroutine HAM
 
-    subroutine GREEN()
+    subroutine GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
+        implicit none
+
+        integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n
+        complex*16, allocatable, dimension(:) :: energies
+        real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta
+        complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT*NUMK,4*NUMT*NUMK), EZ, ENFRAC
+
+        ! This part sets up the E points to be used in plots concerning the Green's function
+        ! -------------------------------------------------------------------------------------
+        ! At the moment it simply gives N_E real energies, where N_E is submitted by the user
+        print *, 'Please enter the number N_E of real energy intervals.'
+        read *, NUME
+
+        allocate(energies(NUME+1))
+
+        energyintervals = (MAXVAL(SORTEDEIGVALS) - MINVAL(SORTEDEIGVALS))/NUME
+
+        print *, 'Please enter the imaginary part for the energies.'
+        read *, eta
+
+        ! These are the "complex" energies E
+        do i = 0, NUME
+            energies(i+1) = cmplx(MINVAL(SORTEDEIGVALS) + energyintervals*i, eta)
+            print *, energies(i+1)
+        end do
+        ! -------------------------------------------------------------------------------------
+
+        do IE = 1, NUME+1 ! Begins a loop over the energies, in order to find G(E) for each E
+
+            EZ = energies(IE)
+            ! Set all G-matrix values equal to zero, so that the summation can work
+            do i = 1, 4*NUMT*NUMK
+                do j = 1, 4*NUMT*NUMK
+                    GMATRIX(j,i) = (0.0,0.0)
+                end do
+            end do
+            ! This initiates the calculation of the Green's function matrix G(α,α',k ; E)
+            ! ---------------------------------------------------------------------------------
+            do k = 1, NUMK ! k
+                do i = 1, NUMT ! α
+                    do j = 1, NUMT ! α'
+
+                        do n = 1, 4*NUMT ! This is the sum over all eigenenergies per k
+
+                            ENFRAC = (1.0/(EZ-EIGENVALUES(n + 4*NUMT*(k-1))))
+                            
+                            GMATRIX(1 + 4*(i-1) + 4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(1 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 11
+                            GMATRIX(1 + 4*(i-1) + 4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(1 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 12
+                            GMATRIX(1 + 4*(i-1) + 4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(1 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 13
+                            GMATRIX(1 + 4*(i-1) + 4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(1 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 14
+
+                            GMATRIX(2 + 4*(i-1) + 4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(2 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 21
+                            GMATRIX(2 + 4*(i-1) + 4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(2 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 22
+                            GMATRIX(2 + 4*(i-1) + 4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(2 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 23
+                            GMATRIX(2 + 4*(i-1) + 4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(2 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 24
+
+                            GMATRIX(3 + 4*(i-1) + 4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(3 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 31
+                            GMATRIX(3 + 4*(i-1) + 4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(3 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 32
+                            GMATRIX(3 + 4*(i-1) + 4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(3 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*&
+                            CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 33
+                            GMATRIX(3 + 4*(i-1) + 4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(3 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 34
+
+                            GMATRIX(4 + 4*(i-1) + 4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(4 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 41
+                            GMATRIX(4 + 4*(i-1) + 4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(4 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 42
+                            GMATRIX(4 + 4*(i-1) + 4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(4 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 43
+                            GMATRIX(4 + 4*(i-1) + 4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(4 + 4*(i-1) +&
+                            &4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*&
+                            &CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 44
+
+                        end do
+
+                    end do
+                end do
+            end do
+            ! ---------------------------------------------------------------------------------
+
+        end do
 
         ! Remember to input separately an array with energies as elements
         ! Make the number of elements configurable ?
