@@ -1,7 +1,7 @@
 program TB
     implicit none
     real*8 :: a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
-	&chempot, mixfactorD, readcharge, fE, T
+	&chempot, mixfactorD, readcharge, fE, T, PI
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT
@@ -13,9 +13,7 @@ program TB
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
 	& maxreps, uniquecounter
 
-    CI = (0.0,1.0) ! setting the imaginary unit
-
-    call PAULI(IdentityPauli,xPauli,yPauli,zPauli) ! Sets the Pauli matrices
+    call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI) ! Sets the Pauli matrices
 
     open(10, file = 'config.dat', action = 'read')
     read(10,*) a_1
@@ -250,9 +248,15 @@ program TB
 
     call INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
 	
-    call NUM_DEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK)
+    call NUM_DEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI)
 
 	!------------------------------------------------------------------------------------------------------------------
+
+    ! ------------------- GREEN'S FUNCTION -----------------
+
+
+
+    ! ------------------------------------------------------
 
     contains
 
@@ -318,6 +322,13 @@ program TB
 		end do
     end subroutine HAM
 
+    subroutine GREEN()
+
+        ! Remember to input separately an array with energies as elements
+        ! Make the number of elements configurable ?
+
+    end subroutine GREEN
+
     subroutine INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
         implicit none
 
@@ -354,15 +365,14 @@ program TB
     end subroutine INT_NUM_DEN
 
     ! --------------------------------------------------------------------------------------------------------------------------------
-    subroutine NUM_DEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK)
+    subroutine NUM_DEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI)
         implicit none
 
         integer :: uniquecounter, i, NUMT, NUMK, numenergyintervals,j,k
         real*8, allocatable, dimension(:,:) :: numdensityperatom, numdensity
-        real*8 :: pi, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals
+        real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK)
 
-        pi = 4.D0*atan(1.D0)
         print *, 'Please insert the lorentzian delta factor for the number density.'
         read *, delta
 
@@ -486,9 +496,10 @@ program TB
                 
     end subroutine RPTS
 
-    subroutine PAULI(s_0,s_1,s_2,s_3) ! Sets the Pauli matrices, where s_0 = Identity
+    subroutine CONSTANTS(s_0,s_1,s_2,s_3,CI,PI) ! Sets the Pauli matrices, where s_0 = Identity
         implicit none
-        complex*16 :: s_0(2,2), s_1(2,2), s_2(2,2), s_3(2,2)
+        complex*16 :: s_0(2,2), s_1(2,2), s_2(2,2), s_3(2,2), CI
+        real*8 :: PI
         
         s_0(1,1) = (1.0,0.0)
         s_0(1,2) = (0.0,0.0)
@@ -507,7 +518,10 @@ program TB
         s_3(2,1) = (0.0,0.0)
         s_3(2,2) = (-1.0,0.0)
 
-    end subroutine PAULI
+        CI = (0.0,1.0) ! setting the imaginary unit
+        PI = 4.D0*atan(1.D0) ! setting π
+
+    end subroutine CONSTANTS
 
     function FERMI(E,T) result(fE) ! The chempot here corresponds to the quasiparticles and is thus 0
         implicit none
