@@ -1,7 +1,7 @@
 program TB
     implicit none
     real*8 :: a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
-	&chempot, mixfactorD, readcharge, fE, T, PI
+	&chempot, mixfactorD, readcharge, fE, T, PI, KB
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT
@@ -13,7 +13,7 @@ program TB
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
 	& maxreps, uniquecounter
 
-    call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI) ! Sets the Pauli matrices
+    call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants
 
     open(10, file = 'config.dat', action = 'read')
     read(10,*) a_1
@@ -153,12 +153,12 @@ program TB
             newDELTA(i) = (0.0,0.0)
 
             do j = 1, 4*NUMT*NUMK
-                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T)*abs(EIGENVECTORS(i,j))**2
+                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
 
-                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(3*NUMT+i,j))**2
 
                 newDELTA(i) = newDELTA(i) -&
-                & FERMI(EIGENVALUES(j),T)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+                & FERMI(EIGENVALUES(j),T,KB)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
             end do
 
             newnu(i) = nuup(i) + nudown(i) ! This is the density of the i-th atom
@@ -207,12 +207,12 @@ program TB
         magnet(i) = 0.0
 
         do j = 1, 4*NUMT*NUMK
-            nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T)*abs(EIGENVECTORS(i,j))**2
+            nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
 
-            nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+            nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(3*NUMT+i,j))**2
 
             newDELTA(i) = newDELTA(i) -&
-            & FERMI(EIGENVALUES(j),T)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+            & FERMI(EIGENVALUES(j),T,KB)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
         end do
 
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
@@ -496,10 +496,10 @@ program TB
                 
     end subroutine RPTS
 
-    subroutine CONSTANTS(s_0,s_1,s_2,s_3,CI,PI) ! Sets the Pauli matrices, where s_0 = Identity
+    subroutine CONSTANTS(s_0,s_1,s_2,s_3,CI,PI,KB) ! Sets some global constants
         implicit none
         complex*16 :: s_0(2,2), s_1(2,2), s_2(2,2), s_3(2,2), CI
-        real*8 :: PI
+        real*8 :: PI, KB
         
         s_0(1,1) = (1.0,0.0)
         s_0(1,2) = (0.0,0.0)
@@ -520,15 +520,14 @@ program TB
 
         CI = (0.0,1.0) ! setting the imaginary unit
         PI = 4.D0*atan(1.D0) ! setting π
+        KB = 8.617385D-5 ! setting Boltzmann's constant - in eVs, change if necessary
 
     end subroutine CONSTANTS
 
-    function FERMI(E,T) result(fE) ! The chempot here corresponds to the quasiparticles and is thus 0
+    function FERMI(E,T,KB) result(fE) ! The chempot here corresponds to the quasiparticles and is thus 0
         implicit none
         real*8, intent(in) :: E, T
-        real*8 :: fE, K_B, expon
-        
-        K_B = 8.617385D-5 ! In eVs, change if necessary
+        real*8 :: fE, KB, expon
 
         if (T == 0.0) then
             if (E < 0.0) then
@@ -537,7 +536,7 @@ program TB
                 fE = 0.0
             endif
         else
-            expon = exp(E/(K_B*T))
+            expon = exp(E/(KB*T))
             fE = 1.0/(expon+1.0)
         endif
 		
