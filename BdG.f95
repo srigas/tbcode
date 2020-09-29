@@ -11,7 +11,7 @@ program TB
     integer, allocatable, dimension(:) :: multiplicity
     real*8, allocatable, dimension(:,:) :: intnumdensity, numdensity, numdensityperatom
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-	& maxreps, uniquecounter
+	& maxreps, uniquecounter, greenpointer
 
     call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants
 
@@ -252,7 +252,17 @@ program TB
 
 	!------------------------------------------------------------------------------------------------------------------
 
-    call GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
+    print *, 'At that point we proceed with the calculation of the Greens function.'
+    print *, 'To calculate it via the eigenvalues press 0 and to calculate it via matrix inversion press 1.'
+    read *, greenpointer
+
+    if (greenpointer == 0) then
+        call GREENEIG(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
+    else if (greenpointer == 1) then
+        call GREENINV(NUMT,NUMK,PI)
+    else
+        print *, 'Invalid input, the Greens function will not be calculated.'
+    endif
 
     contains
 
@@ -318,7 +328,17 @@ program TB
 		end do
     end subroutine HAM
 
-    subroutine GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
+    subroutine GREENINV(NUMT,NUMK,PI)
+        implicit none
+
+        integer :: NUMT, NUMK
+        real*8 :: PI
+
+
+
+    end subroutine GREENINV
+
+    subroutine GREENEIG(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
         implicit none
 
         integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n
@@ -459,7 +479,7 @@ program TB
         102 format(3F17.8)
         close(19)
 
-    end subroutine GREEN
+    end subroutine GREENEIG
 
     subroutine INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
         implicit none
