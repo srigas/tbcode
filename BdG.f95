@@ -252,7 +252,7 @@ program TB
 
 	!------------------------------------------------------------------------------------------------------------------
 
-    ! call GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
+    call GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
 
     contains
 
@@ -322,17 +322,19 @@ program TB
         implicit none
 
         integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n
+        real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
         real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT*NUMK,4*NUMT*NUMK), EZ, ENFRAC
 
         ! This part sets up the E points to be used in plots concerning the Green's function
-        ! -------------------------------------------------------------------------------------
         ! At the moment it simply gives N_E real energies, where N_E is submitted by the user
         print *, 'Please enter the number N_E of real energy intervals.'
         read *, NUME
 
         allocate(energies(NUME+1))
+        allocate(greendensityperatom(1+NUMT,NUME+1)) ! The first column is for the energies, the rest for the values
+        allocate(greendensity(2,NUME+1)) ! The first column is for the energies, the other for the values
 
         energyintervals = (MAXVAL(SORTEDEIGVALS) - MINVAL(SORTEDEIGVALS))/NUME
 
@@ -340,15 +342,14 @@ program TB
         read *, eta
 
         ! These are the "complex" energies E
-        do i = 0, NUME
-            energies(i+1) = cmplx(MINVAL(SORTEDEIGVALS) + energyintervals*i, eta)
-            print *, energies(i+1)
+        do i = 1, NUME+1
+            energies(i) = cmplx(MINVAL(SORTEDEIGVALS) + energyintervals*(i-1), eta)
         end do
-        ! -------------------------------------------------------------------------------------
 
         do IE = 1, NUME+1 ! Begins a loop over the energies, in order to find G(E) for each E
 
             EZ = energies(IE)
+
             ! Set all G-matrix values equal to zero, so that the summation can work
             do i = 1, 4*NUMT*NUMK
                 do j = 1, 4*NUMT*NUMK
@@ -356,7 +357,6 @@ program TB
                 end do
             end do
             ! This initiates the calculation of the Green's function matrix G(α,α',k ; E)
-            ! ---------------------------------------------------------------------------------
             do k = 1, NUMK ! k
                 do i = 1, NUMT ! α
                     do j = 1, NUMT ! α'
@@ -422,12 +422,42 @@ program TB
                     end do
                 end do
             end do
-            ! ---------------------------------------------------------------------------------
+
+            ! Here we calculate the DoS using Green's function
+            greendensityperatom(1,IE) = REAL(EZ)
+            greendensity(1,IE) = REAL(EZ)
+            greendensity(2,IE) = 0.0 ! Startup
+
+            do i = 1, NUMT ! Calculation of density for each atom
+                greendensityperatom(1+i,IE) = 0.0
+
+                do k = 1, NUMK ! Trace over all k-values
+                    do j = 1, 2 ! n = u↑u↑* + u↓u↓*
+                        greendensityperatom(1+i,IE) = greendensityperatom(1+i,IE) -&
+                        &(1.0/PI)*AIMAG(GMATRIX(j + 4*(i-1) + 4*NUMT*(k-1), j + 4*(i-1) + 4*NUMT*(k-1)))
+                    end do
+                end do
+
+                ! Note that if, instead of n, we wanted n↑ and n↓, then we should consider two arrays, GDPA↑ and GDPA↓.
+                ! GDPA↑ would only sum over the 11 elements, while GDPA↓ would sum over the 22 elements
+                greendensity(2,IE) = greendensity(2,IE) + greendensityperatom(1+i,IE)
+            end do
 
         end do
 
-        ! Remember to input separately an array with energies as elements
-        ! Make the number of elements configurable ?
+        open(18, file = 'greendensityperatom.txt', action = 'write')
+        do j = 1, NUME+1 ! Energies = Intervals + 1
+            write (18,100) (greendensityperatom(i,j), i = 1,1+NUMT)
+        end do
+        100 format(41F17.8)
+        close(18)
+
+        open(19, file = 'greendensity.txt', action = 'write')
+        do j = 1, NUME+1 ! Energies = Intervals + 1
+            write (19,102) (greendensity(i,j), i = 1,2)
+        end do
+        102 format(3F17.8)
+        close(19)
 
     end subroutine GREEN
 
@@ -515,7 +545,7 @@ program TB
         end do
 
         open(16, file = 'numdensityperatom.txt', action = 'write')
-        do j = 1, numenergyintervals
+        do j = 1, numenergyintervals+1
             write (16,100) (numdensityperatom(i,j), i = 1,1+NUMT)
         end do
         100 format(41F17.8)
@@ -527,17 +557,14 @@ program TB
         end do
 
         open(15, file = 'numdensity.txt', action = 'write')
-        do j = 1, numenergyintervals
+        do j = 1, numenergyintervals+1
             write (15,102) (numdensity(i,j), i = 1,2)
         end do
         102 format(3F17.8)
         close(15)
 
     end subroutine NUM_DEN
-    ! --------------------------------------------------------------------------------------------------------------------------------
     
-    ! ---------------------------- These have not changed after the addition of spin or particle-hole duality
-
     subroutine BZ(a,b,c,N_x,N_y,N_z,KPTS,Ntot)
         implicit none
 
