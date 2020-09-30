@@ -252,17 +252,7 @@ program TB
 
 	!------------------------------------------------------------------------------------------------------------------
 
-    print *, 'At that point we proceed with the calculation of the Greens function.'
-    print *, 'To calculate it via the eigenvalues press 0 and to calculate it via matrix inversion press 1.'
-    read *, greenpointer
-
-    if (greenpointer == 0) then
-        call GREENEIG(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
-    else if (greenpointer == 1) then
-        call GREENINV(NUMT,NUMK,PI)
-    else
-        print *, 'Invalid input, the Greens function will not be calculated.'
-    endif
+    call GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
 
     contains
 
@@ -328,24 +318,14 @@ program TB
 		end do
     end subroutine HAM
 
-    subroutine GREENINV(NUMT,NUMK,PI)
-        implicit none
-
-        integer :: NUMT, NUMK
-        real*8 :: PI
-
-
-
-    end subroutine GREENINV
-
-    subroutine GREENEIG(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
+    subroutine GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
         implicit none
 
         integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n
         real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
         real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta
-        complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT*NUMK,4*NUMT*NUMK), EZ, ENFRAC
+        complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC
 
         ! This part sets up the E points to be used in plots concerning the Green's function
         ! At the moment it simply gives N_E real energies, where N_E is submitted by the user
@@ -370,14 +350,24 @@ program TB
 
             EZ = energies(IE)
 
-            ! Set all G-matrix values equal to zero, so that the summation can work
-            do i = 1, 4*NUMT*NUMK
-                do j = 1, 4*NUMT*NUMK
-                    GMATRIX(j,i) = (0.0,0.0)
-                end do
+            ! Startup values for the densities
+            greendensityperatom(1,IE) = REAL(EZ)
+            greendensity(1,IE) = REAL(EZ)
+            greendensity(2,IE) = 0.0
+            do i = 1, NUMT
+                greendensityperatom(1+i,IE) = 0.0
             end do
-            ! This initiates the calculation of the Green's function matrix G(α,α',k ; E)
+
+            ! This initiates the calculation of the Green's function matrix G(α,α';E) per k-point
             do k = 1, NUMK ! k
+
+                ! Set all G-matrix values equal to zero, so that the following summation can work
+                do i = 1, 4*NUMT
+                    do j = 1, 4*NUMT
+                        GMATRIX(j,i) = (0.0,0.0)
+                    end do
+                end do
+
                 do i = 1, NUMT ! α
                     do j = 1, NUMT ! α'
 
@@ -385,85 +375,61 @@ program TB
 
                             ENFRAC = (1.0/(EZ-EIGENVALUES(n + 4*NUMT*(k-1))))
                             
-                            GMATRIX(1 + 4*(i-1) + 4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(1 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 11
-                            GMATRIX(1 + 4*(i-1) + 4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(1 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 12
-                            GMATRIX(1 + 4*(i-1) + 4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(1 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 13
-                            GMATRIX(1 + 4*(i-1) + 4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(1 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 14
+                            GMATRIX(1 + 4*(i-1), 1 + 4*(j-1)) = GMATRIX(1 + 4*(i-1), 1 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 11
+                            GMATRIX(1 + 4*(i-1), 2 + 4*(j-1)) = GMATRIX(1 + 4*(i-1), 2 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 12
+                            GMATRIX(1 + 4*(i-1), 3 + 4*(j-1)) = GMATRIX(1 + 4*(i-1), 3 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 13
+                            GMATRIX(1 + 4*(i-1), 4 + 4*(j-1)) = GMATRIX(1 + 4*(i-1), 4 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 14
 
-                            GMATRIX(2 + 4*(i-1) + 4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(2 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 21
-                            GMATRIX(2 + 4*(i-1) + 4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(2 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 22
-                            GMATRIX(2 + 4*(i-1) + 4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(2 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 23
-                            GMATRIX(2 + 4*(i-1) + 4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(2 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 24
+                            GMATRIX(2 + 4*(i-1), 1 + 4*(j-1)) = GMATRIX(2 + 4*(i-1), 1 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 21
+                            GMATRIX(2 + 4*(i-1), 2 + 4*(j-1)) = GMATRIX(2 + 4*(i-1), 2 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 22
+                            GMATRIX(2 + 4*(i-1), 3 + 4*(j-1)) = GMATRIX(2 + 4*(i-1), 3 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 23
+                            GMATRIX(2 + 4*(i-1), 4 + 4*(j-1)) = GMATRIX(2 + 4*(i-1), 4 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 24
 
-                            GMATRIX(3 + 4*(i-1) + 4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(3 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 31
-                            GMATRIX(3 + 4*(i-1) + 4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(3 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 32
-                            GMATRIX(3 + 4*(i-1) + 4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(3 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*&
-                            CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 33
-                            GMATRIX(3 + 4*(i-1) + 4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(3 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 34
+                            GMATRIX(3 + 4*(i-1), 1 + 4*(j-1)) = GMATRIX(3 + 4*(i-1), 1 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 31
+                            GMATRIX(3 + 4*(i-1), 2 + 4*(j-1)) = GMATRIX(3 + 4*(i-1), 2 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 32
+                            GMATRIX(3 + 4*(i-1), 3 + 4*(j-1)) = GMATRIX(3 + 4*(i-1), 3 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 33
+                            GMATRIX(3 + 4*(i-1), 4 + 4*(j-1)) = GMATRIX(3 + 4*(i-1), 4 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 34
 
-                            GMATRIX(4 + 4*(i-1) + 4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(4 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 1 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 41
-                            GMATRIX(4 + 4*(i-1) + 4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(4 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 2 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 42
-                            GMATRIX(4 + 4*(i-1) + 4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(4 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 3 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 43
-                            GMATRIX(4 + 4*(i-1) + 4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) = GMATRIX(4 + 4*(i-1) +&
-                            &4*NUMT*(k-1), 4 + 4*(j-1) + 4*NUMT*(k-1)) + ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*&
-                            &CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 44
+                            GMATRIX(4 + 4*(i-1), 1 + 4*(j-1)) = GMATRIX(4 + 4*(i-1), 1 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 41
+                            GMATRIX(4 + 4*(i-1), 2 + 4*(j-1)) = GMATRIX(4 + 4*(i-1), 2 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 42
+                            GMATRIX(4 + 4*(i-1), 3 + 4*(j-1)) = GMATRIX(4 + 4*(i-1), 3 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 43
+                            GMATRIX(4 + 4*(i-1), 4 + 4*(j-1)) = GMATRIX(4 + 4*(i-1), 4 + 4*(j-1)) +&
+                            &ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 44
 
                         end do
 
                     end do
                 end do
-            end do
 
-            ! Here we calculate the DoS using Green's function
-            greendensityperatom(1,IE) = REAL(EZ)
-            greendensity(1,IE) = REAL(EZ)
-            greendensity(2,IE) = 0.0 ! Startup
-
-            do i = 1, NUMT ! Calculation of density for each atom
-                greendensityperatom(1+i,IE) = 0.0
-
-                do k = 1, NUMK ! Trace over all k-values
+                do i = 1, NUMT ! Calculation of density for each atom
                     do j = 1, 2 ! n = u↑u↑* + u↓u↓*
                         greendensityperatom(1+i,IE) = greendensityperatom(1+i,IE) -&
-                        &(1.0/PI)*AIMAG(GMATRIX(j + 4*(i-1) + 4*NUMT*(k-1), j + 4*(i-1) + 4*NUMT*(k-1)))
+                        &(1.0/PI)*AIMAG(GMATRIX(j + 4*(i-1), j + 4*(i-1)))
                     end do
                 end do
 
-                ! Note that if, instead of n, we wanted n↑ and n↓, then we should consider two arrays, GDPA↑ and GDPA↓.
-                ! GDPA↑ would only sum over the 11 elements, while GDPA↓ would sum over the 22 elements
+            end do ! ends k-sum
+
+            do i = 1, NUMT ! Calculation of full density
                 greendensity(2,IE) = greendensity(2,IE) + greendensityperatom(1+i,IE)
             end do
 
-        end do
+        end do ! ends energies sum
 
         open(18, file = 'greendensityperatom.txt', action = 'write')
         do j = 1, NUME+1 ! Energies = Intervals + 1
@@ -479,7 +445,7 @@ program TB
         102 format(3F17.8)
         close(19)
 
-    end subroutine GREENEIG
+    end subroutine GREEN
 
     subroutine INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
         implicit none
