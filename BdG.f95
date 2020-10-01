@@ -325,7 +325,7 @@ program TB
         real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
         real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta
-        complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC
+        complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GK(4*NUMT,4*NUMT*NUMK)
 
         ! This part sets up the E points to be used in plots concerning the Green's function
         ! At the moment it simply gives N_E real energies, where N_E is submitted by the user
@@ -423,7 +423,14 @@ program TB
                     end do
                 end do
 
+                ini = 1 + (k-1)*4*NUMT
+                fin = k*4*NUMT
+                GK(:,ini:fin) = GMATRIX ! This is a table that contains all G(α,α',k;E) per energy E
+            
             end do ! ends k-sum
+
+            ! Fourier transform of G(k) into G(r-r')
+            
 
             do i = 1, NUMT ! Calculation of full density
                 greendensity(2,IE) = greendensity(2,IE) + greendensityperatom(1+i,IE)
