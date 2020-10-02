@@ -1,7 +1,7 @@
 program TB
     implicit none
     real*8 :: a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
-	&chempot, mixfactorD, readcharge, fE, T, PI, KB
+	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3)
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT
@@ -11,7 +11,8 @@ program TB
     integer, allocatable, dimension(:) :: multiplicity
     real*8, allocatable, dimension(:,:) :: intnumdensity, numdensity, numdensityperatom
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-	& maxreps, uniquecounter, greenpointer
+    & maxreps, uniquecounter, NUMIMP, imppointer
+    integer, allocatable, dimension(:,:) :: IMPPTSVAR
 
     call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants
 
@@ -33,7 +34,7 @@ program TB
         call exit(123)
     endif
 
-    call BZ(a_1,a_2,a_3,NUMKX,NUMKY,NUMKZ,KPTS,NUMK) ! We create the Brillouin Zone's k-points to be used later on
+    call BZ(a_1,a_2,a_3,NUMKX,NUMKY,NUMKZ,PI,KPTS,NUMK,b_1,b_2,b_3) ! We create the Brillouin Zone's k-points to be used later on
 	
 	! The following reads the number of basis vectors from a file named basisvectors.dat
     NUMT = 0
@@ -252,6 +253,17 @@ program TB
 
 	!------------------------------------------------------------------------------------------------------------------
 
+    print *, 'Choose the input way for the impurity sites. To input via vectors press 0 and to input via integers press 1.'
+    1337 continue
+    read *, imppointer
+    if (imppointer /= 0 .and. imppointer /= 1) then
+        print *, 'Invalid entry. Please choose either 0 or 1.'
+        goto 1337
+    endif
+
+    call IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
+
+    print *, 'Initiating Green functions calculations.'
     call GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
 
     contains
@@ -321,7 +333,7 @@ program TB
     subroutine GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
         implicit none
 
-        integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n
+        integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n, ini, fin
         real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
         real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta
@@ -558,22 +570,21 @@ program TB
 
     end subroutine NUM_DEN
     
-    subroutine BZ(a,b,c,N_x,N_y,N_z,KPTS,Ntot)
+    subroutine BZ(a,b,c,N_x,N_y,N_z,PI,KPTS,Ntot,b_1,b_2,b_3)
         implicit none
 
         integer :: N_x, N_y, N_z, Ntot, counter, c_1, c_2, c_3
         real*8 :: a(3), b(3), c(3), b_1(3), b_2(3), b_3(3)
         real*8, allocatable, dimension(:,:) :: KPTS
-        real*8 :: pi, volume
-        pi = 4.D0*atan(1.D0)
+        real*8 :: PI, volume
         counter = 1
 		
         volume = DOT_PRODUCT(a, CROSS_PRODUCT(b,c)) !The volume of the unit cell
 
 		!At this point we calculate the reciprocal space vectors.
-        b_1 = 2*pi*CROSS_PRODUCT(b,c)/volume
-        b_2 = 2*pi*CROSS_PRODUCT(c,a)/volume
-        b_3 = 2*pi*CROSS_PRODUCT(a,b)/volume
+        b_1 = 2*PI*CROSS_PRODUCT(b,c)/volume
+        b_2 = 2*PI*CROSS_PRODUCT(c,a)/volume
+        b_3 = 2*PI*CROSS_PRODUCT(a,b)/volume
 
         Ntot = N_x*N_y*N_z !The total number of different wavevectors in reciprocal space.
 
@@ -617,6 +628,96 @@ program TB
         end do
                 
     end subroutine RPTS
+
+    subroutine IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
+        implicit none
+
+        integer :: NUMIMP, i, j, io, NUMT, counter, imppointer, k
+        real*8 :: b_1(3), b_2(3), b_3(3), PI, IMPPOINT(3), TPOINT(3), RPOINT(3), a_1(3), a_2(3), a_3(3), TPTS(3,NUMT), BASIS(3)
+        real*8, allocatable, dimension(:,:) :: IMPPTS
+        integer, allocatable, dimension(:,:) :: IMPPTSVAR
+
+        NUMIMP = 0
+        if (imppointer == 0) then
+            ! Counts the number of impurities
+            open (31, file = 'impurities.dat', action = 'read')
+            do
+                read(31,*,iostat=io)
+                if (io/=0) exit
+                NUMIMP = NUMIMP + 1
+            end do
+            close(31)
+
+            NUMIMP = NUMIMP - 2
+
+            allocate(IMPPTS(3,NUMIMP))
+            allocate(IMPPTSVAR(4,NUMIMP)) ! This is an array with elements n_1, n_2, n_3, basis index, for each impurity site
+
+            ! Reads the impurities coordinates
+            open (20, file = 'impurities.dat', action = 'read')
+                do i = 1, NUMIMP
+                    read(20,*) IMPPTS(1:3,i)
+                end do
+            close(20)
+
+            ! Discerns the R + τ part for each impurity vector
+            do i = 1, NUMIMP
+                IMPPOINT = IMPPTS(1:3,i)
+
+                ! These find the R part
+                IMPPTSVAR(1,i) = INT(DOT_PRODUCT(IMPPOINT,b_1)/(2*PI)) ! n_1
+                IMPPTSVAR(2,i) = INT(DOT_PRODUCT(IMPPOINT,b_2)/(2*PI)) ! n_2
+                IMPPTSVAR(3,i) = INT(DOT_PRODUCT(IMPPOINT,b_3)/(2*PI)) ! n_3
+                RPOINT = IMPPTSVAR(1,i)*a_1 + IMPPTSVAR(2,i)*a_2 + IMPPTSVAR(3,i)*a_3
+
+                ! The remainder is the IMPPOINT-R = τ'
+                TPOINT = IMPPOINT - RPOINT
+
+                ! This tries to identify that remainder with a basis atom in the unit cell
+                counter = 0
+                do j = 1, NUMT
+                    BASIS = TPTS(3,j)
+
+                    if (TPOINT(1) == BASIS(1) .and. TPOINT(2) == BASIS(2) .and. TPOINT(3) == BASIS(3)) then
+                        counter = j
+                    endif
+                end do
+
+                if (counter == 0) then
+                    print *, 'The impurity No.', i, 'does not correspond to a lattice atom.'
+                    call exit(123)
+                else
+                    IMPPTSVAR(4,i) = counter
+                endif
+            end do
+        else
+            ! Counts the number of impurities
+            open (31, file = 'impvals.txt', action = 'read')
+            do
+                read(31,*,iostat=io)
+                if (io/=0) exit
+                NUMIMP = NUMIMP + 1
+            end do
+            close(31)
+
+            allocate(IMPPTSVAR(4,NUMIMP)) ! This is an array with elements n_1, n_2, n_3, basis index, for each impurity site
+
+            ! Reads the impurities coordinates
+            open (20, file = 'impvals.txt', action = 'read')
+                do i = 1, NUMIMP
+                    read(20,*) IMPPTSVAR(1:4,i)
+                end do
+            close(20)
+
+            do i = 1, NUMIMP
+                if (IMPPTSVAR(4,i) > NUMT .or. IMPPTSVAR(4,i) <= 0) then
+                    print *, 'The impurity No.', i, 'does not correspond to a lattice atom.'
+                    call exit(123)
+                endif
+            end do
+        endif
+    
+    end subroutine IDENTIFIER
 
     subroutine CONSTANTS(s_0,s_1,s_2,s_3,CI,PI,KB) ! Sets some global constants
         implicit none
