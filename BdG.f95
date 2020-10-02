@@ -700,6 +700,8 @@ program TB
             end do
             close(31)
 
+            NUMIMP = NUMIMP - 2
+
             allocate(IMPPTSVAR(4,NUMIMP)) ! This is an array with elements n_1, n_2, n_3, basis index, for each impurity site
 
             ! Reads the impurities coordinates
