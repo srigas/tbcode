@@ -81,10 +81,13 @@ program TB
 
 	! Sets a set of initial values for n and D which will be corrected in the self consistent run of the algorithm later
     ! ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    print *, 'Please insert an initial value for all charges.'
-    read *, readcharge
-    print *, 'Please insert an initial value for all D.'
-    read *, readdelta
+    !print *, 'Please insert an initial value for all charges.'
+    !read *, readcharge
+    !print *, 'Please insert an initial value for all D.'
+    !read *, readdelta
+    ! Uncomment the above 4 lines to make them user-configurable
+    readcharge = 0.3 ! Test values
+    readdelta = (1.0,0.0) ! Test values
     do i = 1, NUMT
         nu(i) = readcharge
         DELTA(i) = readdelta
@@ -104,8 +107,9 @@ program TB
 	!-------------------------------------------------
 
 	! These configurations ensure that the following while loop is initiated
-    print *, 'Please insert the maximum difference epsilon for convergence.'
-    read *, epsilon
+    !print *, 'Please insert the maximum difference epsilon for convergence.'
+    !read *, epsilon
+    epsilon = 0.0001 ! Test values
     reps = 0
     do i = 1, NUMT
         diffN(i) = 1.0
@@ -114,10 +118,12 @@ program TB
 
     print *, 'Please insert the maximum number of runs for the procedure, even if convergence is not achieved.'
     read *, maxreps
-    print *, 'Please insert the mixing factor for the calculation of the new charges after every run of the self-consistent cycle.'
-    read *, mixfactorN
-    print *, 'Please insert the mixing factor for the calculation of D after every run of the self-consistent cycle.'
-    read *, mixfactorD
+    !print *, 'Please insert the mixing factor for the calculation of the new charges after every run of the self-consistent cycle.'
+    !read *, mixfactorN
+    !print *, 'Please insert the mixing factor for the calculation of D after every run of the self-consistent cycle.'
+    !read *, mixfactorD
+    mixfactorN = 0.1
+    mixfactorD = 0.1
 
     print *, 'Initiating charge densities calculation...'
     do while ((MAXVAL(diffN) > epsilon .or. MAXVAL(diffD) > epsilon) .and. reps < maxreps) ! Check for convergence or maxreps
