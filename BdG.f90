@@ -720,9 +720,10 @@ program TB
                 ! This tries to identify that remainder with a basis atom in the unit cell
                 counter = 0
                 do j = 1, NUMT
-                    BASIS = TPTS(3,j)
+                    BASIS = TPTS(1:3,j)
 
-                    if (TPOINT(1)-BASIS(1) <= eps .and. TPOINT(2)-BASIS(2) <= eps .and. TPOINT(3)-BASIS(3) <= eps) then
+                    if (abs(TPOINT(1)-BASIS(1)) <= eps .and. abs(TPOINT(2)-BASIS(2)) <= eps &
+                    &.and. abs(TPOINT(3)-BASIS(3)) <= eps) then
                         counter = j
                     endif
                 end do
