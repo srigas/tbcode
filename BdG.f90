@@ -336,7 +336,7 @@ program TB
         implicit none
 
         integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n, ini, fin, NUMIMP, IMPPTSVAR(4,NUMIMP), &
-        &l, m, a, aprime
+        &l, m, a, aprime, dosorno
         real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
         real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta, &
@@ -349,14 +349,19 @@ program TB
         print *, 'Please enter the number N_E of real energy intervals.'
         read *, NUME
 
-        allocate(energies(NUME+1))
-        allocate(greendensityperatom(1+NUMT,NUME+1)) ! The first column is for the energies, the rest for the values
-        allocate(greendensity(2,NUME+1)) ! The first column is for the energies, the other for the values
-
-        energyintervals = (MAXVAL(SORTEDEIGVALS) - MINVAL(SORTEDEIGVALS))/NUME
-
         print *, 'Please enter the imaginary part for the energies.'
         read *, eta
+
+        print *, 'If you want to perform a DoS calculation using the Green functions press 0, otherwise press any other number.'
+        read *, dosorno
+
+        allocate(energies(NUME+1))
+        if (dosorno == 0) then
+            allocate(greendensityperatom(1+NUMT,NUME+1)) ! The first column is for the energies, the rest for the values
+            allocate(greendensity(2,NUME+1)) ! The first column is for the energies, the other for the values
+        endif
+
+        energyintervals = (MAXVAL(SORTEDEIGVALS) - MINVAL(SORTEDEIGVALS))/NUME
 
         ! These are the "complex" energies E
         do i = 1, NUME+1
@@ -367,13 +372,15 @@ program TB
 
             EZ = energies(IE)
 
-            ! Startup values for the densities
-            greendensityperatom(1,IE) = REAL(EZ)
-            greendensity(1,IE) = REAL(EZ)
-            greendensity(2,IE) = 0.0
-            do i = 1, NUMT
-                greendensityperatom(1+i,IE) = 0.0
-            end do
+            if (dosorno == 0) then
+                ! Startup values for the densities
+                greendensityperatom(1,IE) = REAL(EZ)
+                greendensity(1,IE) = REAL(EZ)
+                greendensity(2,IE) = 0.0
+                do i = 1, NUMT
+                    greendensityperatom(1+i,IE) = 0.0
+                end do
+            endif
 
             ! This initiates the calculation of the Green's function matrix G(α,α';E) per k-point
             do k = 1, NUMK ! k
@@ -433,12 +440,14 @@ program TB
                     end do
                 end do
 
-                do i = 1, NUMT ! Calculation of density for each atom
-                    do j = 1, 2 ! n = u↑u↑* + u↓u↓*
-                        greendensityperatom(1+i,IE) = greendensityperatom(1+i,IE) -&
-                        &(1.0/PI)*AIMAG(GMATRIX(j + 4*(i-1), j + 4*(i-1)))
+                if (dosorno == 0) then
+                    do i = 1, NUMT ! Calculation of density for each atom
+                        do j = 1, 2 ! n = u↑u↑* + u↓u↓*
+                            greendensityperatom(1+i,IE) = greendensityperatom(1+i,IE) -&
+                            &(1.0/PI)*AIMAG(GMATRIX(j + 4*(i-1), j + 4*(i-1)))
+                        end do
                     end do
-                end do
+                endif
 
                 ini = 1 + (k-1)*4*NUMT
                 fin = k*4*NUMT
@@ -485,25 +494,42 @@ program TB
                 end do
             end do
 
-            do i = 1, NUMT ! Calculation of full density
-                greendensity(2,IE) = greendensity(2,IE) + greendensityperatom(1+i,IE)
+            ! This part writes all the Fouriered Green function elements per energy
+            open(55, file = 'greenimp.txt', action = 'readwrite')
+            if (IE /= 1) then
+                do m = 1, 4*NUMIMP*(IE-1)
+                    read (55,*)
+                end do
+            endif
+            do j = 1, 4*NUMIMP
+                write (55,105) (GREENR(i,j), i = 1,4*NUMIMP)
             end do
+            105 format(41F17.6)
+            close(55)
+
+            if (dosorno == 0) then
+                do i = 1, NUMT ! Calculation of full density
+                    greendensity(2,IE) = greendensity(2,IE) + greendensityperatom(1+i,IE)
+                end do
+            endif
 
         end do ! ends energies sum
 
-        open(18, file = 'greendensityperatom.txt', action = 'write')
-        do j = 1, NUME+1 ! Energies = Intervals + 1
-            write (18,100) (greendensityperatom(i,j), i = 1,1+NUMT)
-        end do
-        100 format(41F17.8)
-        close(18)
+        if (dosorno == 0) then
+            open(18, file = 'greendensityperatom.txt', action = 'write')
+            do j = 1, NUME+1 ! Energies = Intervals + 1
+                write (18,100) (greendensityperatom(i,j), i = 1,1+NUMT)
+            end do
+            100 format(41F17.8)
+            close(18)
 
-        open(19, file = 'greendensity.txt', action = 'write')
-        do j = 1, NUME+1 ! Energies = Intervals + 1
-            write (19,102) (greendensity(i,j), i = 1,2)
-        end do
-        102 format(3F17.8)
-        close(19)
+            open(19, file = 'greendensity.txt', action = 'write')
+            do j = 1, NUME+1 ! Energies = Intervals + 1
+                write (19,102) (greendensity(i,j), i = 1,2)
+            end do
+            102 format(3F17.8)
+            close(19)
+        endif
 
     end subroutine GREEN
 
@@ -551,11 +577,11 @@ program TB
         real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK)
 
-        print *, 'Please insert the lorentzian delta factor for the number density.'
-        read *, delta
-
         print *, 'Please enter the number of intervals for the plot of n(E).'
         read *, numenergyintervals
+
+        print *, 'Please insert the lorentzian delta factor for the number density.'
+        read *, delta
 
         allocate(numdensityperatom(1+NUMT,numenergyintervals+1))
         allocate(numdensity(2,numenergyintervals+1))
@@ -679,7 +705,7 @@ program TB
         real*8, allocatable, dimension(:,:) :: IMPPTS
         integer, allocatable, dimension(:,:) :: IMPPTSVAR
 
-        eps = 0.000001
+        eps = 0.0001
 
         NUMIMP = 0
         if (imppointer == 0) then
