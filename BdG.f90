@@ -633,9 +633,12 @@ program TB
         implicit none
 
         integer :: NUMIMP, i, j, io, NUMT, counter, imppointer, k
-        real*8 :: b_1(3), b_2(3), b_3(3), PI, IMPPOINT(3), TPOINT(3), RPOINT(3), a_1(3), a_2(3), a_3(3), TPTS(3,NUMT), BASIS(3)
+        real*8 :: b_1(3), b_2(3), b_3(3), PI, IMPPOINT(3), TPOINT(3), RPOINT(3), a_1(3), a_2(3), a_3(3), TPTS(3,NUMT),&
+        &BASIS(3), eps
         real*8, allocatable, dimension(:,:) :: IMPPTS
         integer, allocatable, dimension(:,:) :: IMPPTSVAR
+
+        eps = 0.000001
 
         NUMIMP = 0
         if (imppointer == 0) then
@@ -665,9 +668,9 @@ program TB
                 IMPPOINT = IMPPTS(1:3,i)
 
                 ! These find the R part
-                IMPPTSVAR(1,i) = INT(DOT_PRODUCT(IMPPOINT,b_1)/(2*PI)) ! n_1
-                IMPPTSVAR(2,i) = INT(DOT_PRODUCT(IMPPOINT,b_2)/(2*PI)) ! n_2
-                IMPPTSVAR(3,i) = INT(DOT_PRODUCT(IMPPOINT,b_3)/(2*PI)) ! n_3
+                IMPPTSVAR(1,i) = FLOOR((1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_1)) ! n_1
+                IMPPTSVAR(2,i) = FLOOR((1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_2)) ! n_2
+                IMPPTSVAR(3,i) = FLOOR((1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_3)) ! n_3
                 RPOINT = IMPPTSVAR(1,i)*a_1 + IMPPTSVAR(2,i)*a_2 + IMPPTSVAR(3,i)*a_3
 
                 ! The remainder is the IMPPOINT-R = τ'
@@ -678,7 +681,7 @@ program TB
                 do j = 1, NUMT
                     BASIS = TPTS(3,j)
 
-                    if (TPOINT(1) == BASIS(1) .and. TPOINT(2) == BASIS(2) .and. TPOINT(3) == BASIS(3)) then
+                    if (TPOINT(1)-BASIS(1) <= eps .and. TPOINT(2)-BASIS(2) <= eps .and. TPOINT(3)-BASIS(3) <= eps) then
                         counter = j
                     endif
                 end do
