@@ -264,7 +264,8 @@ program TB
     call IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
 
     print *, 'Initiating Green functions calculations.'
-    call GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
+    call GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,&
+    &KPTS,NUMIMP,IMPPTSVAR)
 
     contains
 
@@ -330,14 +331,18 @@ program TB
 		end do
     end subroutine HAM
 
-    subroutine GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI)
+    subroutine GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,&
+        &KPTS,NUMIMP,IMPPTSVAR)
         implicit none
 
-        integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n, ini, fin
+        integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n, ini, fin, NUMIMP, IMPPTSVAR(4,NUMIMP), &
+        &l, m, a, aprime
         real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
-        real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta
-        complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GK(4*NUMT,4*NUMT*NUMK)
+        real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta, &
+        &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3)
+        complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GK(4*NUMT,4*NUMT*NUMK),&
+        &GREENR(4*NUMIMP,4*NUMIMP), expon
 
         ! This part sets up the E points to be used in plots concerning the Green's function
         ! At the moment it simply gives N_E real energies, where N_E is submitted by the user
@@ -442,7 +447,43 @@ program TB
             end do ! ends k-sum
 
             ! Fourier transform of G(k) into G(r-r')
+            ! This constructs a 4*NUMIMP x 4*NUMIMP G(r-r') matrix for each energy EZ
+
+            ! Startup
+            do i = 1, 4*NUMIMP
+                do j = 1, 4*NUMIMP
+                    GREENR(j,i) = (0.0,0.0)
+                end do
+            end do
             
+            do i = 1, NUMIMP
+                do j = 1, NUMIMP
+
+                    a = IMPPTSVAR(4,i)
+                    aprime = IMPPTSVAR(4,j)
+                    RPOINT = IMPPTSVAR(1,i)*a_1 + IMPPTSVAR(2,i)*a_2 + IMPPTSVAR(3,i)*a_3
+                    RPRIMEPOINT = IMPPTSVAR(1,j)*a_1 + IMPPTSVAR(2,j)*a_2 + IMPPTSVAR(3,j)*a_3
+
+                    FOURIERVEC(1) = RPRIMEPOINT(1) - RPOINT(1) + TPTS(1,aprime) - TPTS(1,a)
+                    FOURIERVEC(2) = RPRIMEPOINT(2) - RPOINT(2) + TPTS(2,aprime) - TPTS(2,a)
+                    FOURIERVEC(3) = RPRIMEPOINT(3) - RPOINT(3) + TPTS(3,aprime) - TPTS(3,a) 
+
+                    do k = 1, NUMK
+
+                        KPOINT = KPTS(1:3,k)
+                        expon = exp(-CI*DOT_PRODUCT(KPOINT,FOURIERVEC))
+
+                        do l = 1, 4
+                            do m = 1, 4
+                                GREENR(m + 4*(i-1), l + 4*(j-1)) = GREENR(m + 4*(i-1), l + 4*(j-1)) +&
+                                &expon*GK(m + 4*(a-1) , l + 4*(aprime-1) + 4*NUMT*(k-1))                    
+                            end do
+                        end do
+
+                    end do
+
+                end do
+            end do
 
             do i = 1, NUMT ! Calculation of full density
                 greendensity(2,IE) = greendensity(2,IE) + greendensityperatom(1+i,IE)
