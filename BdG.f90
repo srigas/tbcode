@@ -3,15 +3,14 @@ program TB
     real*8 :: a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
 	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3)
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
-	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
-    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT
+	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD, CHEMTYPE
+    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom, LHOPS
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), readdelta
     integer, allocatable, dimension(:) :: multiplicity
-    real*8, allocatable, dimension(:,:) :: intnumdensity, numdensity, numdensityperatom
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-    & maxreps, uniquecounter, NUMIMP, imppointer
+    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES
     integer, allocatable, dimension(:,:) :: IMPPTSVAR
 
     call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants
@@ -63,12 +62,26 @@ program TB
     allocate(USUPCOND(NUMT))
     allocate(nuup(NUMT))
     allocate(nudown(NUMT))
+    allocate(CHEMTYPE(NUMT)) ! Disciminates between different chemical elements
 
     open (1, file = 'basisvectors.dat', action = 'read')
     do i = 1,NUMT
-        read(1,*) TPTS(1:3,i), E0(i), ULCN(i), nuzero(i), BETA(i), USUPCOND(i)
+        read(1,*) TPTS(1:3,i), CHEMTYPE(i), E0(i), ULCN(i), nuzero(i), BETA(i), USUPCOND(i)
     end do
     close(1)
+
+    NUMCHEMTYPES = MAXVAL(CHEMTYPE)
+    allocate(LHOPS(NUMCHEMTYPES,NUMCHEMTYPES))
+
+    open (82, file = 'hoppings.dat', action = 'read')
+    do i = 1, NUMCHEMTYPES
+        read(82,*) (LHOPS(i,j), j = 1, NUMCHEMTYPES)
+    end do
+    close(82)
+
+    do i = 1, NUMCHEMTYPES
+        print *, (LHOPS(i,j), j = 1, NUMCHEMTYPES)
+    end do
 
     ! The *4 factors are now due to spin and particle-hole
     allocate(EIGENVECTORS(4*NUMT,4*NUMT*NUMK))
@@ -139,7 +152,7 @@ program TB
             end do
 
             call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
-            &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN)
+            &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
 
             call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
 
@@ -195,7 +208,7 @@ program TB
         end do
 
         call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
-        &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN)
+        &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
 
         call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
 
@@ -281,12 +294,13 @@ program TB
 	! introduce 4x4 matrices, which are direct products of Pauli matrices in spin and particle-hole space.
 
     subroutine HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,&
-        &KPOINT,HAMILTONIAN)
+        &KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
         implicit none
         real*8, intent(in) :: KPOINT(3)
         real*8 :: R0, RMAX, chempot, RPOINT(3)
-        integer :: NUMT, i, j, IRLATT, IRLATTMAX
-        real*8 :: E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), TTPRIME(3), TPTS(3,NUMT), RLATT(3,IRLATTMAX)
+        integer :: NUMT, i, j, IRLATT, IRLATTMAX, NUMCHEMTYPES
+        real*8 :: E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), TTPRIME(3), TPTS(3,NUMT), &
+        &RLATT(3,IRLATTMAX), CHEMTYPE(NUMT), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), lambda
         complex*16 :: zPauli(2,2), IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, DELTA(NUMT),&
         &expon, HAMILTONIAN(4*NUMT,4*NUMT)
 		
@@ -294,6 +308,8 @@ program TB
 			do j = 1, NUMT
 			
 				TTPRIME = TPTS(1:3,j) - TPTS(1:3,i) ! This calculates t - t' for the basis atoms
+                lambda = LHOPS(CHEMTYPE(i),CHEMTYPE(j)) ! A different hopping parameter depending on atom type
+
 				do IRLATT = 1, IRLATTMAX ! This is the summation over all latice points
 					RPOINT = RLATT(1:3,IRLATT)
 
@@ -302,7 +318,7 @@ program TB
 						positionhamiltonian = (E0(j) - chempot + ULCN(j)*(nu(j) - nuzero(j)))*IdentityPauli - BETA(j)*zPauli
 						deltaterm = DELTA(j) ! This ensures on-site superconducting pairing (s-wave superconductivity)
 					else if (norm2(RPOINT+TTPRIME) < RMAX) then
-						positionhamiltonian = (exp((-1)*norm2(RPOINT+TTPRIME)/R0))*IdentityPauli ! Hopping
+						positionhamiltonian = (lambda*exp((-1)*norm2(RPOINT+TTPRIME)/R0))*IdentityPauli ! Hopping
 						deltaterm = (0.0,0.0) ! This ensures on-site superconducting pairing (s-wave superconductivity)
 					else
 						positionhamiltonian = 0.0*IdentityPauli
