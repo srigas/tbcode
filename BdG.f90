@@ -3,29 +3,29 @@ program TB
     real*8 :: a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
 	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3)
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
-	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD, CHEMTYPE
+	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom, LHOPS
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), readdelta
-    integer, allocatable, dimension(:) :: multiplicity
+    integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
     & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES
     integer, allocatable, dimension(:,:) :: IMPPTSVAR
 
     call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants
 
-    open(10, file = 'config.dat', action = 'read')
-    read(10,*) a_1
-    read(10,*) a_2
-    read(10,*) a_3
-    read(10,*) NUMKX,NUMKY,NUMKZ
-    read(10,*) RMAX ! To determine nearest neighbours
-    read(10,*) R0 ! Constant at the exponential of the hopping element
-    read(10,*) NCELLS ! NCELLS creates a (2NCELLS+1)^3 mini-cube from there the lattice points are used to determine neighbours
-    read(10,*) chempot ! the chemical potential is inserted through config.dat
-    read(10,*) T ! the system's temperature. Default: 0.0
-    close(10)
+    open(1, file = 'config.dat', action = 'read')
+    read(1,*) a_1
+    read(1,*) a_2
+    read(1,*) a_3
+    read(1,*) NUMKX,NUMKY,NUMKZ
+    read(1,*) RMAX ! To determine nearest neighbours
+    read(1,*) R0 ! Constant at the exponential of the hopping element
+    read(1,*) NCELLS ! NCELLS creates a (2NCELLS+1)^3 mini-cube from there the lattice points are used to determine neighbours
+    read(1,*) chempot ! the chemical potential is inserted through config.dat
+    read(1,*) T ! the system's temperature. Default: 0.0
+    close(1)
 
     if (DOT_PRODUCT(a_1,a_2) /= 0 .or. DOT_PRODUCT(a_1,a_3) /= 0 .or. DOT_PRODUCT(a_2,a_3) /= 0 .or. RMAX < 0 .or. R0 <= 0 &
 	& .or. NCELLS < 0 .or. T < 0.0) then
@@ -37,13 +37,13 @@ program TB
 	
 	! The following reads the number of basis vectors from a file named basisvectors.dat
     NUMT = 0
-    open (1, file = 'basisvectors.dat', action = 'read')
+    open (2, file = 'basisvectors.dat', action = 'read')
     do
-        read(1,*,iostat=io)
+        read(2,*,iostat=io)
         if (io/=0) exit
         NUMT = NUMT + 1
     end do
-    close(1)
+    close(2)
 
     NUMT = NUMT - 2 ! To ignore the final 2 lines in basisvectors.dat which are the configuration settings.
 
@@ -73,15 +73,11 @@ program TB
     NUMCHEMTYPES = MAXVAL(CHEMTYPE)
     allocate(LHOPS(NUMCHEMTYPES,NUMCHEMTYPES))
 
-    open (82, file = 'hoppings.dat', action = 'read')
+    open (1, file = 'hoppings.dat', action = 'read')
     do i = 1, NUMCHEMTYPES
-        read(82,*) (LHOPS(i,j), j = 1, NUMCHEMTYPES)
+        read(1,*) (LHOPS(i,j), j = 1, NUMCHEMTYPES)
     end do
-    close(82)
-
-    do i = 1, NUMCHEMTYPES
-        print *, (LHOPS(i,j), j = 1, NUMCHEMTYPES)
-    end do
+    close(1)
 
     ! The *4 factors are now due to spin and particle-hole
     allocate(EIGENVECTORS(4*NUMT,4*NUMT*NUMK))
@@ -219,6 +215,11 @@ program TB
         
     end do
 
+    deallocate(WORK)
+    deallocate(W)
+    deallocate(RWORK)
+    deallocate(HAMILTONIAN)
+
 	! At that point, we calculate the density, magnetization and D for the final Hamiltonian using the converged values.
     do i = 1, NUMT
         nuup(i) = 0.0
@@ -243,13 +244,6 @@ program TB
         print *, 'D = ', newDELTA(i)
         print *, 'M = ', magnet(i)
     end do
-
-    !open(16, file = 'name.txt', action = 'write')
-		!do j = 1, NUMT
-			!write (16,100) (ARRAY(i,j), i = 1,2)
-		!end do
-		!100 format(3F17.8)
-	!close(16)
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
 	!---------------------------------------------------------------------------------------------
@@ -298,9 +292,9 @@ program TB
         implicit none
         real*8, intent(in) :: KPOINT(3)
         real*8 :: R0, RMAX, chempot, RPOINT(3)
-        integer :: NUMT, i, j, IRLATT, IRLATTMAX, NUMCHEMTYPES
+        integer :: NUMT, i, j, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
         real*8 :: E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), TTPRIME(3), TPTS(3,NUMT), &
-        &RLATT(3,IRLATTMAX), CHEMTYPE(NUMT), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), lambda
+        &RLATT(3,IRLATTMAX), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), lambda
         complex*16 :: zPauli(2,2), IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, DELTA(NUMT),&
         &expon, HAMILTONIAN(4*NUMT,4*NUMT)
 		
@@ -517,20 +511,21 @@ program TB
             end do
 
             ! This part writes all the Fouriered Green function elements per energy
-            open(55, file = 'greenimp.txt', action = 'readwrite')
+            open(1, file = 'greenimp.txt', action = 'readwrite')
             if (IE /= 1) then
                 do m = 1, 4*NUMIMP*(IE-1)
-                    read (55,*)
+                    read (1,*)
                 end do
             endif
             do j = 1, 4*NUMIMP
-                write (55,105) (GREENR(i,j), i = 1,4*NUMIMP)
+                write (1,109) (GREENR(i,j), i = 1,4*NUMIMP)
             end do
-            105 format(41F17.6)
-            close(55)
+            109 format(41F17.6)
+            close(1)
 
             if (dosorno == 0) then
                 do i = 1, NUMT ! Calculation of full density
+                    greendensityperatom(i+1,IE) = greendensityperatom(i+1,IE)/NUMK ! Normalization
                     greendensity(2,IE) = greendensity(2,IE) + greendensityperatom(1+i,IE)
                 end do
             endif
@@ -538,19 +533,19 @@ program TB
         end do ! ends energies sum
 
         if (dosorno == 0) then
-            open(18, file = 'greendensityperatom.txt', action = 'write')
+            open(1, file = 'greendensityperatom.txt', action = 'write')
             do j = 1, NUME+1 ! Energies = Intervals + 1
-                write (18,100) (greendensityperatom(i,j), i = 1,1+NUMT)
+                write (1,110) (greendensityperatom(i,j), i = 1,1+NUMT)
             end do
-            100 format(41F17.8)
-            close(18)
+            110 format(41F17.8)
+            close(1)
 
-            open(19, file = 'greendensity.txt', action = 'write')
+            open(1, file = 'greendensity.txt', action = 'write')
             do j = 1, NUME+1 ! Energies = Intervals + 1
-                write (19,102) (greendensity(i,j), i = 1,2)
+                write (1,111) (greendensity(i,j), i = 1,2)
             end do
-            102 format(3F17.8)
-            close(19)
+            111 format(3F17.8)
+            close(1)
         endif
 
     end subroutine GREEN
@@ -581,12 +576,12 @@ program TB
             endif
         end do
 
-        open(13, file = 'intnumdensity.txt', action = 'write')
+        open(1, file = 'intnumdensity.txt', action = 'write')
         do j = 1, uniquecounter
-            write (13,100) (intnumdensity(i,j), i = 1,2)
+            write (1,104) (intnumdensity(i,j), i = 1,2)
         end do
-        100 format(3F17.8)
-        close(13)
+        104 format(3F17.8)
+        close(1)
 
     end subroutine INT_NUM_DEN
 
@@ -638,24 +633,31 @@ program TB
             end do
         end do
 
-        open(16, file = 'numdensityperatom.txt', action = 'write')
-        do j = 1, numenergyintervals+1
-            write (16,100) (numdensityperatom(i,j), i = 1,1+NUMT)
+        ! Normalization
+        do i = 1, NUMT
+            do j = 1, numenergyintervals+1
+                numdensityperatom(i+1,j) = numdensityperatom(i+1,j)/NUMK
+            end do
         end do
-        100 format(41F17.8)
-        close(16)
+
+        open(1, file = 'numdensityperatom.txt', action = 'write')
+        do j = 1, numenergyintervals+1
+            write (1,105) (numdensityperatom(i,j), i = 1,1+NUMT)
+        end do
+        105 format(41F17.8)
+        close(1)
 
         ! Calculation of the full density of states 
         do k = 1, NUMT
             numdensity(2,:) = numdensity(2,:) + numdensityperatom(1+k,:)
         end do
 
-        open(15, file = 'numdensity.txt', action = 'write')
+        open(1, file = 'numdensity.txt', action = 'write')
         do j = 1, numenergyintervals+1
-            write (15,102) (numdensity(i,j), i = 1,2)
+            write (1,106) (numdensity(i,j), i = 1,2)
         end do
-        102 format(3F17.8)
-        close(15)
+        106 format(3F17.8)
+        close(1)
 
     end subroutine NUM_DEN
     
@@ -678,8 +680,6 @@ program TB
         Ntot = N_x*N_y*N_z !The total number of different wavevectors in reciprocal space.
 
         allocate(KPTS(3,Ntot))
-		!It is not necesary to have these on a file
-		!open(12, file = 'BZ.txt', action = 'write')
                     
         do c_1 = 1, N_x
             do c_2 = 1, N_y
@@ -691,9 +691,6 @@ program TB
                 end do
             end do
         end do
-
-		!write (12,'(3F12.6)') KPTS !'(3F10.4)' formats the way it is printed on the .txt file
-		!close(12)
 
     end subroutine BZ
     
@@ -732,13 +729,13 @@ program TB
         NUMIMP = 0
         if (imppointer == 0) then
             ! Counts the number of impurities
-            open (31, file = 'impurities.dat', action = 'read')
+            open (1, file = 'impurities.dat', action = 'read')
             do
-                read(31,*,iostat=io)
+                read(1,*,iostat=io)
                 if (io/=0) exit
                 NUMIMP = NUMIMP + 1
             end do
-            close(31)
+            close(1)
 
             NUMIMP = NUMIMP - 2
 
@@ -746,11 +743,11 @@ program TB
             allocate(IMPPTSVAR(4,NUMIMP)) ! This is an array with elements n_1, n_2, n_3, basis index, for each impurity site
 
             ! Reads the impurities coordinates
-            open (20, file = 'impurities.dat', action = 'read')
+            open (1, file = 'impurities.dat', action = 'read')
                 do i = 1, NUMIMP
-                    read(20,*) IMPPTS(1:3,i)
+                    read(1,*) IMPPTS(1:3,i)
                 end do
-            close(20)
+            close(1)
 
             ! Discerns the R + τ part for each impurity vector
             do i = 1, NUMIMP
@@ -785,24 +782,24 @@ program TB
             end do
         else
             ! Counts the number of impurities
-            open (31, file = 'impvals.txt', action = 'read')
+            open (1, file = 'impvals.txt', action = 'read')
             do
-                read(31,*,iostat=io)
+                read(1,*,iostat=io)
                 if (io/=0) exit
                 NUMIMP = NUMIMP + 1
             end do
-            close(31)
+            close(1)
 
             NUMIMP = NUMIMP - 2
 
             allocate(IMPPTSVAR(4,NUMIMP)) ! This is an array with elements n_1, n_2, n_3, basis index, for each impurity site
 
             ! Reads the impurities coordinates
-            open (20, file = 'impvals.txt', action = 'read')
+            open (1, file = 'impvals.txt', action = 'read')
                 do i = 1, NUMIMP
-                    read(20,*) IMPPTSVAR(1:4,i)
+                    read(1,*) IMPPTSVAR(1:4,i)
                 end do
-            close(20)
+            close(1)
 
             do i = 1, NUMIMP
                 if (IMPPTSVAR(4,i) > NUMT .or. IMPPTSVAR(4,i) <= 0) then
