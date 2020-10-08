@@ -4,9 +4,9 @@ program TB
 	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3)
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
-    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom, LHOPS
+    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA
-    complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
+    complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS, LHOPS
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), readdelta
     integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
@@ -78,6 +78,16 @@ program TB
         read(1,*) (LHOPS(i,j), j = 1, NUMCHEMTYPES)
     end do
     close(1)
+    
+    do i = 1, NUMCHEMTYPES
+        do j = 1, NUMCHEMTYPES
+            if (LHOPS(i,j) /= CONJG(LHOPS(j,i))) then
+                print *, 'Wrong value inserted as hopping element.'
+                print *, 'The', i,j, 'value is different from the', j,i, 'value.'
+                call exit(123)
+            endif
+        end do
+    end do
 
     ! The *4 factors are now due to spin and particle-hole
     allocate(EIGENVECTORS(4*NUMT,4*NUMT*NUMK))
@@ -294,9 +304,9 @@ program TB
         real*8 :: R0, RMAX, chempot, RPOINT(3)
         integer :: NUMT, i, j, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
         real*8 :: E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), TTPRIME(3), TPTS(3,NUMT), &
-        &RLATT(3,IRLATTMAX), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), lambda
+        &RLATT(3,IRLATTMAX)
         complex*16 :: zPauli(2,2), IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, DELTA(NUMT),&
-        &expon, HAMILTONIAN(4*NUMT,4*NUMT)
+        &expon, HAMILTONIAN(4*NUMT,4*NUMT), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), lambda
 		
 		do i = 1, NUMT
 			do j = 1, NUMT
