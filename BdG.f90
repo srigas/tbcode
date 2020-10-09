@@ -394,6 +394,9 @@ program TB
             energies(i) = cmplx(MINVAL(SORTEDEIGVALS) + energyintervals*(i-1), eta)
         end do
 
+        ! This part writes all the Fouriered Green function elements per energy at this text file
+        open(1, file = 'greenimp.txt', action = 'write')
+
         do IE = 1, NUME+1 ! Begins a loop over the energies, in order to find G(E) for each E
 
             EZ = energies(IE)
@@ -520,18 +523,11 @@ program TB
                 end do
             end do
 
-            ! This part writes all the Fouriered Green function elements per energy
-            open(1, file = 'greenimp.txt', action = 'readwrite')
-            if (IE /= 1) then
-                do m = 1, 4*NUMIMP*(IE-1)
-                    read (1,*)
-                end do
-            endif
+            ! Writes the Green impurity elements on greenimp.txt
             do j = 1, 4*NUMIMP
                 write (1,109) (GREENR(i,j), i = 1,4*NUMIMP)
             end do
             109 format(41F17.6)
-            close(1)
 
             if (dosorno == 0) then
                 do i = 1, NUMT ! Calculation of full density
@@ -541,6 +537,7 @@ program TB
             endif
 
         end do ! ends energies sum
+        close(1) ! Closes the greenimp.txt file
 
         if (dosorno == 0) then
             open(1, file = 'greendensityperatom.txt', action = 'write')
@@ -658,8 +655,8 @@ program TB
         close(1)
 
         ! Calculation of the full density of states 
-        do k = 1, NUMT
-            numdensity(2,:) = numdensity(2,:) + numdensityperatom(1+k,:)
+        do i = 1, NUMT
+            numdensity(2,:) = numdensity(2,:) + (1.0/NUMT)*numdensityperatom(1+i,:) ! 1/NUMT for normalization
         end do
 
         open(1, file = 'numdensity.txt', action = 'write')
