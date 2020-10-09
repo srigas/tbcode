@@ -10,7 +10,7 @@ program TB
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), readdelta
     integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES
+    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer
     integer, allocatable, dimension(:,:) :: IMPPTSVAR
 
     call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants
@@ -225,10 +225,10 @@ program TB
         
     end do
 
-    deallocate(WORK)
-    deallocate(W)
-    deallocate(RWORK)
-    deallocate(HAMILTONIAN)
+    !deallocate(WORK)
+    !deallocate(W)
+    !deallocate(RWORK)
+    !deallocate(HAMILTONIAN)
 
 	! At that point, we calculate the density, magnetization and D for the final Hamiltonian using the converged values.
     do i = 1, NUMT
@@ -254,6 +254,14 @@ program TB
         print *, 'D = ', newDELTA(i)
         print *, 'M = ', magnet(i)
     end do
+
+    ! Routine for making band diagrams
+    print *, 'To export band diagram data press 0, otherwise press any other number.'
+    read *, bandpointer
+    if (bandpointer == 0) then
+        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0, &
+    &RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+    endif
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
 	!---------------------------------------------------------------------------------------------
@@ -556,6 +564,82 @@ program TB
         endif
 
     end subroutine GREEN
+
+    subroutine BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0, &
+    &RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+        implicit none
+
+        integer :: NUMDIR, i, io, j, m, n, NUMT, LWORK, INFO, intpointer, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), &
+        &NUMCHEMTYPES
+        integer, allocatable, dimension(:) :: KINTS
+        real*8 :: DIR(3), KPOINT(3), HORINT, W(4*NUMT), RWORK(3*(4*NUMT) - 2), chempot, TPTS(3,NUMT), &
+        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT)
+        real*8, allocatable, dimension(:,:) :: INPOINT, OUTPOINT
+        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), DELTA(NUMT), &
+        &LHOPS(NUMCHEMTYPES,NUMCHEMTYPES)
+
+        ! The following reads the number of basis vectors from a file named basisvectors.dat
+        NUMDIR = 0
+        open (1, file = 'bandpoints.dat', action = 'read')
+        do
+            read(1,*,iostat=io)
+            if (io/=0) exit
+            NUMDIR = NUMDIR + 1
+        end do
+        close(1)
+
+        NUMDIR = NUMDIR - 2 ! To ignore the final 2 lines in basisvectors.dat which are the configuration settings.
+
+        allocate(INPOINT(3,NUMDIR))
+        allocate(OUTPOINT(3,NUMDIR))
+        allocate(KINTS(NUMDIR))
+
+        open(1, file = 'bandpoints.dat', action = 'read')
+        do i = 1, NUMDIR
+            read (1,*) INPOINT(1:3,i), OUTPOINT(1:3,i), KINTS(i)
+        end do
+        close(1)
+
+        print *, 'Press 0 to print only intervals and any other number to print k-values as well.'
+        read *, intpointer
+        HORINT = 0.0 ! This is a parameter that adjusts the widths for each k-dimension window at the band diagram
+        
+        open(2, file = 'bands.txt', action = 'write')
+        do i = 1, NUMDIR
+            
+            DIR = OUTPOINT(1:3,i) - INPOINT(1:3,i) ! Sets the direction along which we calculate K points
+            KPOINT = INPOINT(1:3,i) ! Startup of each k
+
+            do j = 1, KINTS(i)
+
+                do m = 1, 4*NUMT
+                    do n = 1, 4*NUMT
+                        HAMILTONIAN(n,m) = (0.0,0.0)
+                    end do
+                end do
+
+                call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
+                &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+
+                ! N because we only want eigenvalues and not eigenvectors
+                call zheev ('N', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
+                
+                if (intpointer == 0) then
+                    write (2,*) HORINT, W ! W = Eigenvalues
+                else 
+                    write (2,*) KPOINT, HORINT, W
+                endif
+                KPOINT = KPOINT + (1.0/KINTS(i))*DIR
+                HORINT = HORINT + (1.0/KINTS(i))*SQRT(DOT_PRODUCT(DIR,DIR))
+
+            end do
+
+        !109 format(41F17.6)
+
+        end do
+        close(2)
+
+    end subroutine BANDS
 
     subroutine INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
         implicit none
