@@ -4,9 +4,10 @@ program TB
 	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3)
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
-    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom
+    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom, &
+    &LHOPS, PREFACTORS, NNDIS
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA
-    complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS, LHOPS
+    complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), readdelta
     integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
@@ -32,6 +33,8 @@ program TB
         print *, 'A value inserted in config.dat is incorrect. Please try again after everything has been corrected.'
         call exit(123)
     endif
+
+    IRLATTMAX = (2*NCELLS+1)**3 ! Configures how many neighbouring cells are taken into account
 
     call BZ(a_1,a_2,a_3,NUMKX,NUMKY,NUMKZ,PI,KPTS,NUMK,b_1,b_2,b_3) ! We create the Brillouin Zone's k-points to be used later on
 	
@@ -72,41 +75,27 @@ program TB
 
     NUMCHEMTYPES = MAXVAL(CHEMTYPE)
     allocate(LHOPS(NUMCHEMTYPES,NUMCHEMTYPES))
-
-    open (1, file = 'hoppings.dat', action = 'read')
-    do i = 1, NUMCHEMTYPES
-        read(1,*) (LHOPS(i,j), j = 1, NUMCHEMTYPES)
-    end do
-    close(1)
-    
-    do i = 1, NUMCHEMTYPES
-        do j = 1, NUMCHEMTYPES
-            if (LHOPS(i,j) /= CONJG(LHOPS(j,i))) then
-                print *, 'Wrong value inserted as hopping element.'
-                print *, 'The', i,j, 'value is different from the', j,i, 'value.'
-                call exit(123)
-            endif
-        end do
-    end do
+    allocate(PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES))
+    allocate(NNDIS(NUMCHEMTYPES,NUMCHEMTYPES))
 
     ! The *4 factors are now due to spin and particle-hole
     allocate(EIGENVECTORS(4*NUMT,4*NUMT*NUMK))
     allocate(EIGENVALUES(4*NUMT*NUMK))
     allocate(HAMILTONIAN(4*NUMT,4*NUMT))
 
-    IRLATTMAX =  (2*NCELLS+1)**3 ! Configures how many neighbouring cells are taken into account
-
     call RPTS(a_1,a_2,a_3,NCELLS,RLATT,IRLATTMAX) ! Here we construct the RLATT Matrix consisting of the lattice sites
+
+    call HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
 
 	! Sets a set of initial values for n and D which will be corrected in the self consistent run of the algorithm later
     ! ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     !print *, 'Please insert an initial value for all charges.'
     !read *, readcharge
-    !print *, 'Please insert an initial value for all D.'
-    !read *, readdelta
+    print *, 'Please insert an initial value for all D.'
+    read *, readdelta
     ! Uncomment the above 4 lines to make them user-configurable
     readcharge = 0.3 ! Test values
-    readdelta = (1.0,0.0) ! Test values
+    !readdelta = (0.3,0.0) ! Test values
     do i = 1, NUMT
         nu(i) = readcharge
         DELTA(i) = readdelta
@@ -158,7 +147,7 @@ program TB
             end do
 
             call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
-            &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+            &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
 
             call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
 
@@ -214,7 +203,7 @@ program TB
         end do
 
         call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
-        &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+        &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
 
         call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
 
@@ -259,8 +248,9 @@ program TB
     print *, 'To export band diagram data press 0, otherwise press any other number.'
     read *, bandpointer
     if (bandpointer == 0) then
-        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0, &
-    &RMAX,ULCN,newnu,nuzero,BETA,newDELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0,RMAX,&
+        &ULCN,newnu,nuzero,BETA,newDELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,&
+        &NUMCHEMTYPES)
     endif
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
@@ -305,22 +295,74 @@ program TB
 	! manually handle how the 4*NUMT*4*NUMT Hamiltonian comes out. If we want a non-hand-fixed result, we should
 	! introduce 4x4 matrices, which are direct products of Pauli matrices in spin and particle-hole space.
 
+    subroutine HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
+        implicit none
+
+        integer :: NUMT, i, j, ITYPE, JTYPE, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
+        real*8 :: TTPRIME(3), RPOINT(3), TPTS(3,NUMT), RLATT(3,IRLATTMAX), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), &
+        &lambda, PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), NNDIS(NUMCHEMTYPES,NUMCHEMTYPES), expon, R0
+
+        open (1, file = 'hoppings.dat', action = 'read')
+        do i = 1, NUMCHEMTYPES
+            read(1,*) (LHOPS(i,j), j = 1, NUMCHEMTYPES)
+        end do
+        close(1)
+        
+        do i = 1, NUMCHEMTYPES
+            do j = 1, NUMCHEMTYPES
+                if (LHOPS(i,j) /= LHOPS(j,i)) then
+                    print *, 'Wrong value inserted as hopping element.'
+                    print *, 'The', i,j, 'value is different from the', j,i, 'value.'
+                    call exit(123)
+                endif
+            end do
+        end do
+
+        ! This calculates the nearest-neighbour distance for each interaction
+        do ITYPE = 1, NUMCHEMTYPES
+            do JTYPE = 1, NUMCHEMTYPES
+                NNDIS(JTYPE,ITYPE) = 100000.0
+
+                do i = 1, NUMT
+                    do j = 1, NUMT
+
+                        if (CHEMTYPE(i) == ITYPE .and. CHEMTYPE(j) == JTYPE) then
+                            TTPRIME = TPTS(1:3,j) - TPTS(1:3,i)
+                            do IRLATT = 1, IRLATTMAX
+                                RPOINT = RLATT(1:3,IRLATT)
+
+                                if (NNDIS(JTYPE,ITYPE) > norm2(RPOINT+TTPRIME) .and. norm2(RPOINT+TTPRIME) > 0.0001) then
+                                    NNDIS(JTYPE,ITYPE) = norm2(RPOINT+TTPRIME)
+                                endif
+
+                            end do
+                        endif
+
+                    end do
+                end do
+    
+                expon = exp(-NNDIS(JTYPE,ITYPE)/R0)
+                PREFACTORS(JTYPE,ITYPE) = LHOPS(JTYPE,ITYPE)/expon ! This sets the prefactors to be entered in the Hamiltonian
+            end do
+        end do
+
+    end subroutine HOPPS
+
     subroutine HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,&
-        &KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+        &KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
         implicit none
         real*8, intent(in) :: KPOINT(3)
-        real*8 :: R0, RMAX, chempot, RPOINT(3)
         integer :: NUMT, i, j, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
-        real*8 :: E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), TTPRIME(3), TPTS(3,NUMT), &
-        &RLATT(3,IRLATTMAX)
+        real*8 :: R0, RMAX, chempot, RPOINT(3), E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), TTPRIME(3), &
+        &TPTS(3,NUMT), RLATT(3,IRLATTMAX), PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), lambda
         complex*16 :: zPauli(2,2), IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, DELTA(NUMT),&
-        &expon, HAMILTONIAN(4*NUMT,4*NUMT), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), lambda
+        &expon, HAMILTONIAN(4*NUMT,4*NUMT)
 		
 		do i = 1, NUMT
 			do j = 1, NUMT
 			
 				TTPRIME = TPTS(1:3,j) - TPTS(1:3,i) ! This calculates t - t' for the basis atoms
-                lambda = LHOPS(CHEMTYPE(i),CHEMTYPE(j)) ! A different hopping parameter depending on atom type
+                lambda = PREFACTORS(CHEMTYPE(i),CHEMTYPE(j)) ! A different hopping prefactor depending on atom type
 
 				do IRLATT = 1, IRLATTMAX ! This is the summation over all latice points
 					RPOINT = RLATT(1:3,IRLATT)
@@ -566,17 +608,17 @@ program TB
     end subroutine GREEN
 
     subroutine BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0, &
-    &RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+    &RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
         implicit none
 
         integer :: NUMDIR, i, io, j, m, n, NUMT, LWORK, INFO, intpointer, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), &
         &NUMCHEMTYPES, checker
         integer, allocatable, dimension(:) :: KINTS
         real*8 :: DIR(3), KPOINT(3), HORINT, W(4*NUMT), RWORK(3*(4*NUMT) - 2), chempot, TPTS(3,NUMT), &
-        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT)
+        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), &
+        &PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES)
         real*8, allocatable, dimension(:,:) :: INPOINT, OUTPOINT
-        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), DELTA(NUMT), &
-        &LHOPS(NUMCHEMTYPES,NUMCHEMTYPES)
+        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), DELTA(NUMT)
 
         ! The following reads the number of basis vectors from a file named basisvectors.dat
         NUMDIR = 0
@@ -638,7 +680,7 @@ program TB
                 end do
 
                 call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,&
-                &DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+                &DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
 
                 ! N because we only want eigenvalues and not eigenvectors
                 call zheev ('N', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
