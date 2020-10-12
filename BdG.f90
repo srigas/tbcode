@@ -260,7 +260,7 @@ program TB
     read *, bandpointer
     if (bandpointer == 0) then
         call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0, &
-    &RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+    &RMAX,ULCN,newnu,nuzero,BETA,newDELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
     endif
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
@@ -330,7 +330,7 @@ program TB
 						positionhamiltonian = (E0(j) - chempot + ULCN(j)*(nu(j) - nuzero(j)))*IdentityPauli - BETA(j)*zPauli
 						deltaterm = DELTA(j) ! This ensures on-site superconducting pairing (s-wave superconductivity)
 					else if (norm2(RPOINT+TTPRIME) < RMAX) then
-						positionhamiltonian = (lambda*exp((-1)*norm2(RPOINT+TTPRIME)/R0))*IdentityPauli ! Hopping
+						positionhamiltonian = (-lambda*exp(-norm2(RPOINT+TTPRIME)/R0))*IdentityPauli ! Hopping
 						deltaterm = (0.0,0.0) ! This ensures on-site superconducting pairing (s-wave superconductivity)
 					else
 						positionhamiltonian = 0.0*IdentityPauli
@@ -373,7 +373,7 @@ program TB
         &l, m, a, aprime, dosorno
         real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
-        real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta, &
+        real*8 :: PI, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta, &
         &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3)
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GK(4*NUMT,4*NUMT*NUMK),&
         &GREENR(4*NUMIMP,4*NUMIMP), expon
@@ -573,7 +573,7 @@ program TB
         &NUMCHEMTYPES, checker
         integer, allocatable, dimension(:) :: KINTS
         real*8 :: DIR(3), KPOINT(3), HORINT, W(4*NUMT), RWORK(3*(4*NUMT) - 2), chempot, TPTS(3,NUMT), &
-        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), diff(3)
+        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT)
         real*8, allocatable, dimension(:,:) :: INPOINT, OUTPOINT
         complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), DELTA(NUMT), &
         &LHOPS(NUMCHEMTYPES,NUMCHEMTYPES)
@@ -600,6 +600,14 @@ program TB
         end do
         close(1)
 
+        ! Inverse space points, instead of configuration space input
+        do i = 1, NUMDIR
+            do j = 1, 3
+                INPOINT(j,i) = 2.0*PI*INPOINT(j,i)
+                OUTPOINT(j,i) = 2.0*PI*OUTPOINT(j,i)
+            end do
+        end do
+
         print *, 'Press 0 to print only intervals and any other number to print k-values as well.'
         read *, intpointer
         HORINT = 0.0 ! This is a parameter that adjusts the widths for each k-dimension window at the band diagram
@@ -612,8 +620,7 @@ program TB
 
             ! In order to avoid taking some points twice
             if (i /= NUMDIR) then
-                diff = OUTPOINT(1:3,i) - INPOINT(1:3,i+1)
-                if (SQRT(DOT_PRODUCT(diff,diff)) < 0.0001) then
+                if (norm2(OUTPOINT(1:3,i) - INPOINT(1:3,i+1)) < 0.0001) then
                     checker = KINTS(i)
                 else
                     checker = KINTS(i)+1
