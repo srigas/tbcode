@@ -570,10 +570,10 @@ program TB
         implicit none
 
         integer :: NUMDIR, i, io, j, m, n, NUMT, LWORK, INFO, intpointer, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), &
-        &NUMCHEMTYPES
+        &NUMCHEMTYPES, checker
         integer, allocatable, dimension(:) :: KINTS
         real*8 :: DIR(3), KPOINT(3), HORINT, W(4*NUMT), RWORK(3*(4*NUMT) - 2), chempot, TPTS(3,NUMT), &
-        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT)
+        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), diff(3)
         real*8, allocatable, dimension(:,:) :: INPOINT, OUTPOINT
         complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), DELTA(NUMT), &
         &LHOPS(NUMCHEMTYPES,NUMCHEMTYPES)
@@ -610,7 +610,19 @@ program TB
             DIR = OUTPOINT(1:3,i) - INPOINT(1:3,i) ! Sets the direction along which we calculate K points
             KPOINT = INPOINT(1:3,i) ! Startup of each k
 
-            do j = 1, KINTS(i)
+            ! In order to avoid taking some points twice
+            if (i /= NUMDIR) then
+                diff = OUTPOINT(1:3,i) - INPOINT(1:3,i+1)
+                if (SQRT(DOT_PRODUCT(diff,diff)) < 0.0001) then
+                    checker = KINTS(i)
+                else
+                    checker = KINTS(i)+1
+                endif
+            else
+                checker = KINTS(i)+1
+            endif
+
+            do j = 1, checker
 
                 do m = 1, 4*NUMT
                     do n = 1, 4*NUMT
@@ -618,8 +630,8 @@ program TB
                     end do
                 end do
 
-                call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
-                &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
+                call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,&
+                &DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,LHOPS,CHEMTYPE,NUMCHEMTYPES)
 
                 ! N because we only want eigenvalues and not eigenvectors
                 call zheev ('N', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
@@ -629,12 +641,13 @@ program TB
                 else 
                     write (2,*) KPOINT, HORINT, W
                 endif
-                KPOINT = KPOINT + (1.0/KINTS(i))*DIR
-                HORINT = HORINT + (1.0/KINTS(i))*SQRT(DOT_PRODUCT(DIR,DIR))
+
+                if (j /= checker) then
+                    KPOINT = KPOINT + (1.0/KINTS(i))*DIR
+                    HORINT = HORINT + (1.0/KINTS(i))*SQRT(DOT_PRODUCT(DIR,DIR))
+                endif
 
             end do
-
-        !109 format(41F17.6)
 
         end do
         close(2)
