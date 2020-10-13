@@ -28,8 +28,7 @@ program TB
     read(1,*) T ! the system's temperature. Default: 0.0
     close(1)
 
-    if (DOT_PRODUCT(a_1,a_2) /= 0 .or. DOT_PRODUCT(a_1,a_3) /= 0 .or. DOT_PRODUCT(a_2,a_3) /= 0 .or. RMAX < 0 .or. R0 <= 0 &
-	& .or. NCELLS < 0 .or. T < 0.0) then
+    if (RMAX < 0 .or. R0 <= 0 .or. NCELLS < 0 .or. T < 0.0) then
         print *, 'A value inserted in config.dat is incorrect. Please try again after everything has been corrected.'
         call exit(123)
     endif
