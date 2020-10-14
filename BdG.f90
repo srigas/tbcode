@@ -14,7 +14,7 @@ program TB
     & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer
     integer, allocatable, dimension(:,:) :: IMPPTSVAR
 
-    call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants
+    call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants.
 
     open(1, file = 'config.dat', action = 'read')
     read(1,*) a_1
