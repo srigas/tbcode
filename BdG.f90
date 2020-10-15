@@ -685,9 +685,9 @@ program TB
                 call zheev ('N', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
                 
                 if (intpointer == 0) then
-                    write (2,*) HORINT, W ! W = Eigenvalues
+                    write (2,121) HORINT, W ! W = Eigenvalues
                 else 
-                    write (2,*) KPOINT, HORINT, W
+                    write (2,121) KPOINT, HORINT, W
                 endif
 
                 if (j /= checker) then
@@ -698,6 +698,7 @@ program TB
             end do
 
         end do
+        121 format(5F17.8)
         close(2)
 
     end subroutine BANDS
