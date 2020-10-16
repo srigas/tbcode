@@ -14,6 +14,11 @@ program TB
     & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer
     integer, allocatable, dimension(:,:) :: IMPPTSVAR
 
+    ! Important notice about write format. Example: format(5F17.8)
+    ! 5F -> 5 = number of entries before changing row, F is because we want numbers
+    ! 17 = Total digits of entry. E.g. if entry = PI, then 3. are the first two digits, therefore 17-2=15 are remaining.
+    ! Of these 15, the 8 (that's what the .8 stands for) are reserved as decimals. The 15-8=7 remaining are spaces before the next entry.
+
     call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants.
 
     open(1, file = 'config.dat', action = 'read')
@@ -692,7 +697,7 @@ program TB
 
                 if (j /= checker) then
                     KPOINT = KPOINT + (1.0/KINTS(i))*DIR
-                    HORINT = HORINT + (1.0/KINTS(i))*SQRT(DOT_PRODUCT(DIR,DIR))
+                    HORINT = HORINT + (1.0/KINTS(i))*norm2(DIR)
                 endif
 
             end do
