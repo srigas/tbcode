@@ -1,6 +1,6 @@
 program TB
     implicit none
-    real*8 :: a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
+    real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
 	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3)
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
@@ -22,6 +22,7 @@ program TB
     call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants.
 
     open(1, file = 'config.dat', action = 'read')
+    read(1,*) ALAT
     read(1,*) a_1
     read(1,*) a_2
     read(1,*) a_3
@@ -37,6 +38,11 @@ program TB
         print *, 'A value inserted in config.dat is incorrect. Please try again after everything has been corrected.'
         call exit(123)
     endif
+
+    ! This is because the lattice vectors are inserted through Bravais coordinates
+    a_1 = ALAT*a_1
+    a_2 = ALAT*a_2
+    a_3 = ALAT*a_3
 
     IRLATTMAX = (2*NCELLS+1)**3 ! Configures how many neighbouring cells are taken into account
 
@@ -254,7 +260,7 @@ program TB
     if (bandpointer == 0) then
         call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0,RMAX,&
         &ULCN,newnu,nuzero,BETA,newDELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,&
-        &NUMCHEMTYPES)
+        &NUMCHEMTYPES,ALAT)
     endif
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
@@ -612,7 +618,8 @@ program TB
     end subroutine GREEN
 
     subroutine BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0, &
-    &RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+        &RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,&
+        &NUMCHEMTYPES,ALAT)
         implicit none
 
         integer :: NUMDIR, i, io, j, m, n, NUMT, LWORK, INFO, intpointer, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), &
@@ -620,7 +627,7 @@ program TB
         integer, allocatable, dimension(:) :: KINTS
         real*8 :: DIR(3), KPOINT(3), HORINT, W(4*NUMT), RWORK(3*(4*NUMT) - 2), chempot, TPTS(3,NUMT), &
         &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), &
-        &PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES)
+        &PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), ALAT
         real*8, allocatable, dimension(:,:) :: INPOINT, OUTPOINT
         complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), DELTA(NUMT)
 
@@ -649,8 +656,8 @@ program TB
         ! Inverse space points, instead of configuration space input
         do i = 1, NUMDIR
             do j = 1, 3
-                INPOINT(j,i) = 2.0*PI*INPOINT(j,i)
-                OUTPOINT(j,i) = 2.0*PI*OUTPOINT(j,i)
+                INPOINT(j,i) = ((2.0*PI)/ALAT)*INPOINT(j,i)
+                OUTPOINT(j,i) = ((2.0*PI)/ALAT)*OUTPOINT(j,i)
             end do
         end do
 
