@@ -3,7 +3,7 @@ program TB
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
 	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3)
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
-	& UNIQUEEIGVALS, BETA, magnet, USUPCOND, nuup, nudown, diffN, diffD
+	& UNIQUEEIGVALS, BETA, magnet, VSUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom, &
     &LHOPS, PREFACTORS, NNDIS
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA
@@ -72,14 +72,14 @@ program TB
     allocate(magnet(NUMT))
     allocate(DELTA(NUMT))
     allocate(newDELTA(NUMT))
-    allocate(USUPCOND(NUMT))
+    allocate(VSUPCOND(NUMT))
     allocate(nuup(NUMT))
     allocate(nudown(NUMT))
     allocate(CHEMTYPE(NUMT)) ! Disciminates between different chemical elements
 
     open (1, file = 'basisvectors.dat', action = 'read')
     do i = 1,NUMT
-        read(1,*) TPTS(1:3,i), CHEMTYPE(i), E0(i), ULCN(i), nuzero(i), BETA(i), USUPCOND(i)
+        read(1,*) TPTS(1:3,i), CHEMTYPE(i), E0(i), ULCN(i), nuzero(i), BETA(i), VSUPCOND(i)
     end do
     close(1)
 
@@ -183,7 +183,7 @@ program TB
                 nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(3*NUMT+i,j))**2
 
                 newDELTA(i) = newDELTA(i) -&
-                & FERMI(EIGENVALUES(j),T,KB)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+                & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
             end do
 
             newnu(i) = nuup(i) + nudown(i) ! This is the density of the i-th atom
@@ -242,7 +242,7 @@ program TB
             nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(3*NUMT+i,j))**2
 
             newDELTA(i) = newDELTA(i) -&
-            & FERMI(EIGENVALUES(j),T,KB)*USUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+            & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
         end do
 
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
