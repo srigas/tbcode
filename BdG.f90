@@ -1,7 +1,7 @@
 program TB
     implicit none
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
-	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3)
+	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, VSUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom, &
@@ -34,7 +34,10 @@ program TB
     read(1,*) T ! the system's temperature. Default: 0.0
     close(1)
 
-    if (RMAX < 0 .or. R0 <= 0 .or. NCELLS < 0 .or. T < 0.0) then
+    DETCHECK = a_1(1)*(a_2(2)*a_3(3)-a_2(3)*a_3(2)) - a_2(1)*(a_1(2)*a_3(3)-a_3(2)*a_1(3)) + &
+    &a_3(1)*(a_1(2)*a_2(3)-a_1(3)*a_2(2))
+
+    if (DETCHECK <= 0.0001 .or. RMAX < 0 .or. R0 <= 0 .or. NCELLS < 0 .or. T < 0.0) then
         print *, 'A value inserted in config.dat is incorrect. Please try again after everything has been corrected.'
         call exit(123)
     endif
