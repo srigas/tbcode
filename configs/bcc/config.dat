@@ -12,3 +12,5 @@
 (0.3,0.0) ! Initial value for Delta
 0.1 ! Mixing factor for charges
 0.1 ! Mixing factor for Delta
+1000 ! Points for DoS
+0.1 ! Lorentzian broadening at DoS

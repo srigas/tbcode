@@ -1,18 +1,18 @@
 program TB
     implicit none
+    integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
+    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer, intnumdenpointer, NUME
+    integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE
+    integer, allocatable, dimension(:,:) :: IMPPTSVAR
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
-	&chempot, mixfactorD, inicharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK
+	&chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, VSUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom, &
     &LHOPS, PREFACTORS, NNDIS
+    complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), inidelta
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
-    complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), inidelta
-    integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE
-    integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer, intnumdenpointer
-    integer, allocatable, dimension(:,:) :: IMPPTSVAR
 
     ! Important notice about write format. Example: format(5F17.8)
     ! 5F -> 5 = number of entries before changing row, F is because we want numbers
@@ -36,6 +36,8 @@ program TB
     read(1,*) inidelta ! initial value for Delta
     read(1,*) mixfactorN ! mixing factor for N
     read(1,*) mixfactorD ! mixing factor for Delta
+    read(1,*) NUME ! Number of points for DoS diagrams
+    read(1,*) lorentzbroad ! Lorentz Gamma broadening
     close(1)
 
     DETCHECK = a_1(1)*(a_2(2)*a_3(3)-a_2(3)*a_3(2)) - a_2(1)*(a_1(2)*a_3(3)-a_3(2)*a_1(3)) + &
@@ -263,7 +265,7 @@ program TB
     endif
 	!---------------------------------------------------------------------------------------------
 
-    call NUM_DEN(EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI)
+    call NUM_DEN(EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI,NUME,lorentzbroad)
 
 	!------------------------------------------------------------------------------------------------------------------
 
@@ -275,7 +277,7 @@ program TB
         call IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
 
         print *, 'Initiating Green functions calculations.'
-        call GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR)
+        call GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,lorentzbroad)
     endif
 
     contains
@@ -392,25 +394,20 @@ program TB
 		end do
     end subroutine HAM
 
-    subroutine GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR)
+    subroutine GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,lorentzbroad)
         implicit none
 
         integer :: NUMT, NUMK, NUME, IE, i, j, k, n, ini, fin, NUMIMP, IMPPTSVAR(4,NUMIMP), &
         &l, m, a, aprime, dosorno
         real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
-        real*8 :: PI, EIGENVALUES(4*NUMT*NUMK), energyintervals, eta, &
+        real*8 :: PI, EIGENVALUES(4*NUMT*NUMK), energyintervals, lorentzbroad, &
         &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3)
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GK(4*NUMT,4*NUMT*NUMK),&
         &GREENR(4*NUMIMP,4*NUMIMP), expon
 
         ! This part sets up the E points to be used in plots concerning the Green's function
-        ! At the moment it simply gives N_E real energies, where N_E is submitted by the user
-        print *, 'Please enter the number N_E of real energy intervals.'
-        read *, NUME
-
-        print *, 'Please enter the imaginary part for the energies.'
-        read *, eta
+        ! At the moment it simply gives NUME real energies.
 
         print *, 'If you want to perform a DoS calculation using the Green functions press 0, otherwise press any other number.'
         read *, dosorno
@@ -425,7 +422,7 @@ program TB
 
         ! These are the "complex" energies E
         do i = 1, NUME+1
-            energies(i) = cmplx(MINVAL(EIGENVALUES) + energyintervals*(i-1), eta)
+            energies(i) = cmplx(MINVAL(EIGENVALUES) + energyintervals*(i-1), lorentzbroad)
         end do
 
         ! This part writes all the Fouriered Green function elements per energy at this text file
@@ -725,27 +722,21 @@ program TB
     end subroutine INT_NUM_DEN
 
     ! --------------------------------------------------------------------------------------------------------------------------------
-    subroutine NUM_DEN(EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI)
+    subroutine NUM_DEN(EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI,NUME,lorentzbroad)
         implicit none
 
-        integer :: i, NUMT, NUMK, numenergyintervals,j,k
+        integer :: i, j, k, NUMT, NUMK, NUME
         real*8, allocatable, dimension(:,:) :: numdensityperatom, numdensity
-        real*8 :: PI, delta, EIGENVALUES(4*NUMT*NUMK), energyintervals
+        real*8 :: PI, lorentzbroad, EIGENVALUES(4*NUMT*NUMK), energyintervals
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK)
 
-        print *, 'Please enter the number of intervals for the plot of n(E).'
-        read *, numenergyintervals
+        allocate(numdensityperatom(1+NUMT,NUME+1))
+        allocate(numdensity(2,NUME+1))
 
-        print *, 'Please insert the lorentzian delta factor for the number density.'
-        read *, delta
-
-        allocate(numdensityperatom(1+NUMT,numenergyintervals+1))
-        allocate(numdensity(2,numenergyintervals+1))
-
-        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/numenergyintervals
+        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/NUME
 
         ! These are the energies E
-        do i = 0, numenergyintervals
+        do i = 0, NUME
             numdensityperatom(1,i+1) = MINVAL(EIGENVALUES) + energyintervals*i
             numdensity(1,i+1) = MINVAL(EIGENVALUES) + energyintervals*i
             numdensity(2,i+1) = 0.0
@@ -753,20 +744,20 @@ program TB
 
         ! Calculation of the DoS PER ATOM
         do k = 1, NUMT
-            do i = 0, numenergyintervals
+            do i = 0, NUME
                 numdensityperatom(1+k,i+1) = 0.0
                 do j = 1, 4*NUMT*NUMK
                     if (EIGENVALUES(j) > 0.0) then ! the 0.0 check is due to the chemical potential
-                        numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + (delta/pi)*((abs(EIGENVECTORS(k,j))**2 +&
-                        & abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) - EIGENVALUES(j))**2 + delta**2) +&
-                        & (abs(EIGENVECTORS(k+2*NUMT,j))**2 + abs(EIGENVECTORS(k+3*NUMT,j))**2)/((numdensityperatom(1,i+1) +&
-                        & EIGENVALUES(j))**2 + delta**2))
+                        numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + (lorentzbroad/pi)*&
+                        &((abs(EIGENVECTORS(k,j))**2 + abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) -&
+                        &EIGENVALUES(j))**2 + lorentzbroad**2) + (abs(EIGENVECTORS(k+2*NUMT,j))**2 +&
+                        &abs(EIGENVECTORS(k+3*NUMT,j))**2)/((numdensityperatom(1,i+1) +EIGENVALUES(j))**2 + lorentzbroad**2))
                     else if (EIGENVALUES(j) == 0.0) then
                         ! the 0.5 is inserted to avoid double counting in the absence of superconducting effects for zero eigenvalues
-                        numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + 0.5*(delta/pi)*((abs(EIGENVECTORS(k,j))**2 +&
-                        & abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) - EIGENVALUES(j))**2 + delta**2) +&
-                        & (abs(EIGENVECTORS(k+2*NUMT,j))**2 + abs(EIGENVECTORS(k+3*NUMT,j))**2)/((numdensityperatom(1,i+1) +&
-                        & EIGENVALUES(j))**2 + delta**2))
+                        numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + 0.5*(lorentzbroad/pi)*&
+                        &((abs(EIGENVECTORS(k,j))**2 + abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) -&
+                        &EIGENVALUES(j))**2 + lorentzbroad**2) + (abs(EIGENVECTORS(k+2*NUMT,j))**2 +&
+                        &abs(EIGENVECTORS(k+3*NUMT,j))**2)/((numdensityperatom(1,i+1) +EIGENVALUES(j))**2 + lorentzbroad**2))
                     endif
                 end do
             end do
@@ -774,13 +765,13 @@ program TB
 
         ! Normalization
         do i = 1, NUMT
-            do j = 1, numenergyintervals+1
+            do j = 1, NUME+1
                 numdensityperatom(i+1,j) = numdensityperatom(i+1,j)/NUMK
             end do
         end do
 
         open(1, file = 'numdensityperatom.txt', action = 'write')
-        do j = 1, numenergyintervals+1
+        do j = 1, NUME+1
             write (1,105) (numdensityperatom(i,j), i = 1,1+NUMT)
         end do
         105 format(41F17.8)
@@ -792,7 +783,7 @@ program TB
         end do
 
         open(1, file = 'numdensity.txt', action = 'write')
-        do j = 1, numenergyintervals+1
+        do j = 1, NUME+1
             write (1,106) (numdensity(i,j), i = 1,2)
         end do
         106 format(3F17.8)
