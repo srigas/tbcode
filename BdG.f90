@@ -1,17 +1,17 @@
 program TB
     implicit none
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
-	&chempot, mixfactorD, readcharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK
+	&chempot, mixfactorD, inicharge, fE, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, BETA, magnet, VSUPCOND, nuup, nudown, diffN, diffD
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom, &
     &LHOPS, PREFACTORS, NNDIS
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
-    complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), readdelta
+    complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), inidelta
     integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer
+    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer, intnumdenpointer
     integer, allocatable, dimension(:,:) :: IMPPTSVAR
 
     ! Important notice about write format. Example: format(5F17.8)
@@ -30,8 +30,12 @@ program TB
     read(1,*) RMAX ! To determine nearest neighbours
     read(1,*) R0 ! Constant at the exponential of the hopping element
     read(1,*) NCELLS ! NCELLS creates a (2NCELLS+1)^3 mini-cube from there the lattice points are used to determine neighbours
-    read(1,*) chempot ! the chemical potential is inserted through config.dat
     read(1,*) T ! the system's temperature. Default: 0.0
+    read(1,*) chempot ! initial value for chemical potential
+    read(1,*) inicharge ! initial value for charges
+    read(1,*) inidelta ! initial value for Delta
+    read(1,*) mixfactorN ! mixing factor for N
+    read(1,*) mixfactorD ! mixing factor for Delta
     close(1)
 
     DETCHECK = a_1(1)*(a_2(2)*a_3(3)-a_2(3)*a_3(2)) - a_2(1)*(a_1(2)*a_3(3)-a_3(2)*a_1(3)) + &
@@ -86,6 +90,11 @@ program TB
     end do
     close(1)
 
+    do i = 1, NUMT
+        nu(i) = inicharge
+        DELTA(i) = inidelta
+    end do
+
     NUMCHEMTYPES = MAXVAL(CHEMTYPE)
     allocate(LHOPS(NUMCHEMTYPES,NUMCHEMTYPES))
     allocate(PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES))
@@ -99,25 +108,6 @@ program TB
     call RPTS(a_1,a_2,a_3,NCELLS,RLATT,IRLATTMAX) ! Here we construct the RLATT Matrix consisting of the lattice sites
 
     call HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
-
-	! Sets a set of initial values for n and D which will be corrected in the self consistent run of the algorithm later
-    ! ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    !print *, 'Please insert an initial value for all charges.'
-    !read *, readcharge
-    print *, 'Please insert an initial value for all D.'
-    read *, readdelta
-    ! Uncomment the above 4 lines to make them user-configurable
-    readcharge = 0.3 ! Test values
-    !readdelta = (0.3,0.0) ! Test values
-    do i = 1, NUMT
-        nu(i) = readcharge
-        DELTA(i) = readdelta
-    end do
-	!do i = 1, NUMT
-		!print *, 'Please insert the initial value for the charge of atom number', i
-		!read *, nu(i)
-	!end do
-	! ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 	
 	!The following are for the configuration of zheev. The *4 factors are due to spin and particle-hole
 	!-------------------------------------------------
@@ -128,9 +118,7 @@ program TB
 	!-------------------------------------------------
 
 	! These configurations ensure that the following while loop is initiated
-    !print *, 'Please insert the maximum difference epsilon for convergence.'
-    !read *, epsilon
-    epsilon = 0.0001 ! Test values
+    epsilon = 0.001 ! Test values
     reps = 0
     do i = 1, NUMT
         diffN(i) = 1.0
@@ -139,12 +127,6 @@ program TB
 
     print *, 'Please insert the maximum number of runs for the procedure, even if convergence is not achieved.'
     read *, maxreps
-    !print *, 'Please insert the mixing factor for the calculation of the new charges after every run of the self-consistent cycle.'
-    !read *, mixfactorN
-    !print *, 'Please insert the mixing factor for the calculation of D after every run of the self-consistent cycle.'
-    !read *, mixfactorD
-    mixfactorN = 0.1
-    mixfactorD = 0.1
 
     print *, 'Initiating charge densities calculation...'
     do while ((MAXVAL(diffN) > epsilon .or. MAXVAL(diffD) > epsilon) .and. reps < maxreps) ! Check for convergence or maxreps
@@ -189,11 +171,10 @@ program TB
                 & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
             end do
 
-            newnu(i) = nuup(i) + nudown(i) ! This is the density of the i-th atom
-            newnu(i) = newnu(i)/(NUMK) ! Since the eigenvectors come normalized, this ensures the normalization of n
+            newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
             diffN(i) = abs(newnu(i) - nu(i))
 			
-            newDELTA(i) = newDELTA(i)/NUMK ! Similarly, the normalization of D
+            newDELTA(i) = newDELTA(i)/NUMK ! Normalization
             diffD(i) = abs(abs(newDELTA(i)) - abs(DELTA(i)))
 
         end do
@@ -226,11 +207,6 @@ program TB
         EIGENVECTORS(:,ini:fin) = HAMILTONIAN
         
     end do
-
-    !deallocate(WORK)
-    !deallocate(W)
-    !deallocate(RWORK)
-    !deallocate(HAMILTONIAN)
 
 	! At that point, we calculate the density, magnetization and D for the final Hamiltonian using the converged values.
     do i = 1, NUMT
@@ -268,47 +244,43 @@ program TB
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
 	!---------------------------------------------------------------------------------------------
-    allocate(UNIQUEEIGVALS(4*NUMT*NUMK))
-    uniquecounter = 0
-    min_val = MINVAL(EIGENVALUES) - 1.0 ! -1.0 Is inserted for a case of complete degeneracy
-    max_val = MAXVAL(EIGENVALUES)
-    do while (min_val < max_val)
-        uniquecounter = uniquecounter + 1
-        min_val = MINVAL(EIGENVALUES, mask = EIGENVALUES > min_val)
-        UNIQUEEIGVALS(uniquecounter) = min_val
-    enddo
-    allocate(SORTEDEIGVALS(uniquecounter))
-    SORTEDEIGVALS = UNIQUEEIGVALS(1:uniquecounter)
+    print *, 'To calculate integrated number density press 0, otherwise press any other number.'
+    read *, intnumdenpointer
+    if (intnumdenpointer == 0) then
+        allocate(UNIQUEEIGVALS(4*NUMT*NUMK))
+        uniquecounter = 0
+        min_val = MINVAL(EIGENVALUES) - 1.0 ! -1.0 Is inserted for a case of complete degeneracy
+        max_val = MAXVAL(EIGENVALUES)
+        do while (min_val < max_val)
+            uniquecounter = uniquecounter + 1
+            min_val = MINVAL(EIGENVALUES, mask = EIGENVALUES > min_val)
+            UNIQUEEIGVALS(uniquecounter) = min_val
+        enddo
+        allocate(SORTEDEIGVALS(uniquecounter))
+        SORTEDEIGVALS = UNIQUEEIGVALS(1:uniquecounter)
+
+        call INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
+    endif
 	!---------------------------------------------------------------------------------------------
 
-    call INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
-	
-    call NUM_DEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI)
+    call NUM_DEN(EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI)
 
 	!------------------------------------------------------------------------------------------------------------------
 
-    print *, 'Choose the input way for the impurity sites. To input via vectors press 0 and to input via integers press 1.'
-    1337 continue
+    print *, 'Choose the input way for the impurity sites.'
+    print *, '0 to input via vectors, 1 to input via integers, other number to skip Greens functions calculations.'
     read *, imppointer
-    if (imppointer /= 0 .and. imppointer /= 1) then
-        print *, 'Invalid entry. Please choose either 0 or 1.'
-        goto 1337
+
+    if (imppointer == 0 .or. imppointer == 1) then
+        call IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
+
+        print *, 'Initiating Green functions calculations.'
+        call GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR)
     endif
-
-    call IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
-
-    print *, 'Initiating Green functions calculations.'
-    call GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,&
-    &KPTS,NUMIMP,IMPPTSVAR)
 
     contains
 
-	! Now, after the addition of spin, the result becomes a 2x2 matrix and the previous function is now a subroutine.
-	! After the addition of particle-hole duality, we don't need to increase its dimensions once again, we will only
-	! manually handle how the 4*NUMT*4*NUMT Hamiltonian comes out. If we want a non-hand-fixed result, we should
-	! introduce 4x4 matrices, which are direct products of Pauli matrices in spin and particle-hole space.
-
-    subroutine HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
+	subroutine HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
         implicit none
 
         integer :: NUMT, i, j, ITYPE, JTYPE, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
@@ -420,15 +392,14 @@ program TB
 		end do
     end subroutine HAM
 
-    subroutine GREEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,&
-        &KPTS,NUMIMP,IMPPTSVAR)
+    subroutine GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR)
         implicit none
 
-        integer :: uniquecounter, NUMT, NUMK, NUME, IE, i, j, k, n, ini, fin, NUMIMP, IMPPTSVAR(4,NUMIMP), &
+        integer :: NUMT, NUMK, NUME, IE, i, j, k, n, ini, fin, NUMIMP, IMPPTSVAR(4,NUMIMP), &
         &l, m, a, aprime, dosorno
         real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
-        real*8 :: PI, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals, eta, &
+        real*8 :: PI, EIGENVALUES(4*NUMT*NUMK), energyintervals, eta, &
         &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3)
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GK(4*NUMT,4*NUMT*NUMK),&
         &GREENR(4*NUMIMP,4*NUMIMP), expon
@@ -450,11 +421,11 @@ program TB
             allocate(greendensity(2,NUME+1)) ! The first column is for the energies, the other for the values
         endif
 
-        energyintervals = (MAXVAL(SORTEDEIGVALS) - MINVAL(SORTEDEIGVALS))/NUME
+        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/NUME
 
         ! These are the "complex" energies E
         do i = 1, NUME+1
-            energies(i) = cmplx(MINVAL(SORTEDEIGVALS) + energyintervals*(i-1), eta)
+            energies(i) = cmplx(MINVAL(EIGENVALUES) + energyintervals*(i-1), eta)
         end do
 
         ! This part writes all the Fouriered Green function elements per energy at this text file
@@ -754,12 +725,12 @@ program TB
     end subroutine INT_NUM_DEN
 
     ! --------------------------------------------------------------------------------------------------------------------------------
-    subroutine NUM_DEN(uniquecounter,SORTEDEIGVALS,EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI)
+    subroutine NUM_DEN(EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI)
         implicit none
 
-        integer :: uniquecounter, i, NUMT, NUMK, numenergyintervals,j,k
+        integer :: i, NUMT, NUMK, numenergyintervals,j,k
         real*8, allocatable, dimension(:,:) :: numdensityperatom, numdensity
-        real*8 :: PI, delta, SORTEDEIGVALS(uniquecounter), EIGENVALUES(4*NUMT*NUMK), energyintervals
+        real*8 :: PI, delta, EIGENVALUES(4*NUMT*NUMK), energyintervals
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK)
 
         print *, 'Please enter the number of intervals for the plot of n(E).'
@@ -771,12 +742,12 @@ program TB
         allocate(numdensityperatom(1+NUMT,numenergyintervals+1))
         allocate(numdensity(2,numenergyintervals+1))
 
-        energyintervals = (MAXVAL(SORTEDEIGVALS) - MINVAL(SORTEDEIGVALS))/numenergyintervals
+        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/numenergyintervals
 
         ! These are the energies E
         do i = 0, numenergyintervals
-            numdensityperatom(1,i+1) = MINVAL(SORTEDEIGVALS) + energyintervals*i
-            numdensity(1,i+1) = MINVAL(SORTEDEIGVALS) + energyintervals*i
+            numdensityperatom(1,i+1) = MINVAL(EIGENVALUES) + energyintervals*i
+            numdensity(1,i+1) = MINVAL(EIGENVALUES) + energyintervals*i
             numdensity(2,i+1) = 0.0
         end do
 
@@ -785,12 +756,12 @@ program TB
             do i = 0, numenergyintervals
                 numdensityperatom(1+k,i+1) = 0.0
                 do j = 1, 4*NUMT*NUMK
-                    if (EIGENVALUES(j) > chempot) then
+                    if (EIGENVALUES(j) > 0.0) then ! the 0.0 check is due to the chemical potential
                         numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + (delta/pi)*((abs(EIGENVECTORS(k,j))**2 +&
                         & abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) - EIGENVALUES(j))**2 + delta**2) +&
                         & (abs(EIGENVECTORS(k+2*NUMT,j))**2 + abs(EIGENVECTORS(k+3*NUMT,j))**2)/((numdensityperatom(1,i+1) +&
                         & EIGENVALUES(j))**2 + delta**2))
-                    else if (EIGENVALUES(j) == chempot) then
+                    else if (EIGENVALUES(j) == 0.0) then
                         ! the 0.5 is inserted to avoid double counting in the absence of superconducting effects for zero eigenvalues
                         numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + 0.5*(delta/pi)*((abs(EIGENVECTORS(k,j))**2 +&
                         & abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) - EIGENVALUES(j))**2 + delta**2) +&
@@ -841,9 +812,9 @@ program TB
         volume = DOT_PRODUCT(a, CROSS_PRODUCT(b,c)) !The volume of the unit cell
 
 		!At this point we calculate the reciprocal space vectors.
-        b_1 = 2*PI*CROSS_PRODUCT(b,c)/volume
-        b_2 = 2*PI*CROSS_PRODUCT(c,a)/volume
-        b_3 = 2*PI*CROSS_PRODUCT(a,b)/volume
+        b_1 = 2.0*PI*CROSS_PRODUCT(b,c)/volume
+        b_2 = 2.0*PI*CROSS_PRODUCT(c,a)/volume
+        b_3 = 2.0*PI*CROSS_PRODUCT(a,b)/volume
 
         Ntot = N_x*N_y*N_z !The total number of different wavevectors in reciprocal space.
 
@@ -1007,7 +978,7 @@ program TB
 
     end subroutine CONSTANTS
 
-    function FERMI(E,T,KB) result(fE) ! The chempot here corresponds to the quasiparticles and is thus 0
+    function FERMI(E,T,KB) result(fE)
         implicit none
         real*8, intent(in) :: E, T
         real*8 :: fE, KB, expon
