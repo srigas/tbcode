@@ -2,13 +2,13 @@
 0.5,0.5,0.0 ! a_1
 0.0,0.5,0.5 ! a_2
 0.5,0.0,0.5 ! a_3
-30,30,30 ! N_x, N_y, N_z
+50,50,50 ! N_x, N_y, N_z
 0.8 ! R_max
 1 ! R_0
 3 ! NCELLS
 0.0 ! Temperature
 0.0 ! Initial Chempot value
-0.3 ! Initial guess for the charges
+0.8 ! Initial guess for the charges
 (0.3,0.0) ! Initial value for Delta
 0.1 ! Mixing factor for charges
 0.1 ! Mixing factor for Delta

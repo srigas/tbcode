@@ -1,17 +1,16 @@
 program TB
     implicit none
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer, intnumdenpointer, NUME
+    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer, intnumdenpointer, NUME, metalorno
     integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE
     integer, allocatable, dimension(:,:) :: IMPPTSVAR
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
-	&chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad
+	&chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad, diffchem, newchempot
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
-	& UNIQUEEIGVALS, BETA, magnet, VSUPCOND, nuup, nudown, diffN, diffD
-    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, intnumdensity, numdensity, numdensityperatom, &
-    &LHOPS, PREFACTORS, NNDIS
+	& UNIQUEEIGVALS, BETA, magnet, VSUPCOND, nuup, nudown, diffN, diffD, DOSATMU
+    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, LHOPS, PREFACTORS, NNDIS
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), inidelta
-    complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA
+    complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA, METALDELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
 
     ! Important notice about write format. Example: format(5F17.8)
@@ -80,6 +79,8 @@ program TB
     allocate(diffD(NUMT))
     allocate(magnet(NUMT))
     allocate(DELTA(NUMT))
+    allocate(METALDELTA(NUMT))
+    allocate(DOSATMU(NUMT))
     allocate(newDELTA(NUMT))
     allocate(VSUPCOND(NUMT))
     allocate(nuup(NUMT))
@@ -95,6 +96,7 @@ program TB
     do i = 1, NUMT
         nu(i) = inicharge
         DELTA(i) = inidelta
+        METALDELTA(i) = (0.0,0.0)
     end do
 
     NUMCHEMTYPES = MAXVAL(CHEMTYPE)
@@ -120,18 +122,97 @@ program TB
 	!-------------------------------------------------
 
 	! These configurations ensure that the following while loop is initiated
-    epsilon = 0.001 ! Test values
+    epsilon = 0.001
+    metalorno = 1
+    diffchem = 1.0
     reps = 0
+    do i = 1, NUMT
+        diffN(i) = 1.0
+    end do
+
+    print *, 'Please insert the self-consistency cycles for the metal calculations.'
+    read *, maxreps
+
+    print *, 'Initiating METAL self-consistency procedure...'
+    do while ((MAXVAL(diffN) > epsilon .or. diffchem > epsilon) .and. reps < maxreps)
+
+        do kcounter = 1, NUMK
+            KPOINT = KPTS(1:3,kcounter)
+
+            do j = 1, 4*NUMT
+                do i = 1, 4*NUMT
+                    HAMILTONIAN(i,j) = (0.0,0.0)
+                end do
+            end do
+
+            call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,METALDELTA,&
+            &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+
+            call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO)
+
+            ini = (kcounter-1)*4*NUMT + 1
+            fin = kcounter*4*NUMT
+            EIGENVALUES(ini:fin) = W
+            EIGENVECTORS(:,ini:fin) = HAMILTONIAN
+        end do
+
+        do i = 1, NUMT
+            nuup(i) = 0.0
+            nudown(i) = 0.0
+
+            do j = 1, 4*NUMT*NUMK
+                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
+                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+            end do
+
+            newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
+            diffN(i) = abs(newnu(i) - nu(i))
+        end do
+
+        ! Calculates DoS per atom at E = chempot (previous)
+        do i = 1, NUMT
+            DOSATMU(i) = 0.0
+            do j = 1, 4*NUMT*NUMK
+                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*((abs(EIGENVECTORS(i,j))**2 +&
+                &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
+            end do
+        end do
+
+        do i = 1, NUMT
+            DOSATMU(i) = DOSATMU(i)/NUMK ! Normalization
+        end do
+
+        newchempot = chempot
+        do i = 1 , NUMT
+            newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
+        end do
+        diffchem = abs(chempot-newchempot)
+
+        nu = (1.0 - mixfactorN)*nu + mixfactorN*newnu
+        chempot = newchempot ! new chempot for next run
+        reps = reps + 1
+
+    end do
+    print *, 'METAL self-consistency finished.'
+
+    ! We now perform a DoS calculation for the metal, in order to then be able to compare it to the SC.
+    call NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
+
+    ! Using the chemical potential that we obtained, as well as the charges (nu), as initial values, we proceed to use them for the
+    ! self-consistency cycle of the superconductor, i.e. Delta =/= 0.
+    metalorno = 0
+    reps = 0
+    diffchem = 1.0
     do i = 1, NUMT
         diffN(i) = 1.0
         diffD(i) = 1.0
     end do
 
-    print *, 'Please insert the maximum number of runs for the procedure, even if convergence is not achieved.'
+    print *, 'Please insert the self-consistency cycles for the superconductor calculations.'
     read *, maxreps
 
-    print *, 'Initiating charge densities calculation...'
-    do while ((MAXVAL(diffN) > epsilon .or. MAXVAL(diffD) > epsilon) .and. reps < maxreps) ! Check for convergence or maxreps
+    print *, 'Initiating SC self-consistency procedure...'
+    do while ((MAXVAL(diffN) > epsilon .or. MAXVAL(diffD) > epsilon .or. diffchem > epsilon) .and. reps < maxreps) ! Check for convergence or maxreps
 
         do kcounter = 1, NUMK
             KPOINT = KPTS(1:3,kcounter)
@@ -158,11 +239,12 @@ program TB
 
 		! At that point all the eigenvalues are in the form (.,.,.,.,...) and all the eigenvectors are 4*NUMT*NUMK columns of 4*NUMT rows
 
-		! Calculates the charges n-up, n-down and n as well as Delta
+		! Calculates the charges n-up, n-down and n as well as Delta and chempot
         do i = 1, NUMT
             nuup(i) = 0.0
             nudown(i) = 0.0
             newDELTA(i) = (0.0,0.0)
+            DOSATMU(i) = 0.0
 
             do j = 1, 4*NUMT*NUMK
                 nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
@@ -171,6 +253,9 @@ program TB
 
                 newDELTA(i) = newDELTA(i) -&
                 & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+
+                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
+                &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
             end do
 
             newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
@@ -181,11 +266,18 @@ program TB
 
         end do
 
+        newchempot = chempot
+        do i = 1 , NUMT
+            newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
+        end do
+        diffchem = abs(chempot-newchempot)
+
         DELTA = (1.0 - mixfactorD)*DELTA + mixfactorD*newDELTA
         nu = (1.0 - mixfactorN)*nu + mixfactorN*newnu
+        chempot = newchempot ! new chempot for next run
         reps = reps + 1
     end do
-    print *, 'Charge densities evaluated.'
+    print *, 'SC self-consistency finished.'
 
 	!At that point we have a good approximation for the charges. We move on to calculate once again the Hamiltonian and then the states density.    
     do kcounter = 1, NUMK
@@ -216,6 +308,7 @@ program TB
         nudown(i) = 0.0
         newDELTA(i) = (0.0,0.0)
         magnet(i) = 0.0
+        DOSATMU(i) = 0.0
 
         do j = 1, 4*NUMT*NUMK
             nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
@@ -224,22 +317,32 @@ program TB
 
             newDELTA(i) = newDELTA(i) -&
             & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+
+            DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
+            &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
         end do
 
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
         newDELTA(i) = newDELTA(i)/NUMK ! Final D per atom
         magnet(i) = (nuup(i) - nudown(i))/NUMK ! Final magnetization
 
-        print *, 'n = ', newnu(i)
-        print *, 'D = ', newDELTA(i)
-        print *, 'M = ', magnet(i)
+        print *, 'n = ', newnu(i), 'for atom No.1', i
+        print *, 'D = ', newDELTA(i), 'for atom No.1', i
+        print *, 'M = ', magnet(i), 'for atom No.1', i
     end do
+
+    newchempot = chempot
+    do i = 1 , NUMT
+        newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
+    end do
+
+    print *, 'chempot = ', newchempot
 
     ! Routine for making band diagrams
     print *, 'To export band diagram data press 0, otherwise press any other number.'
     read *, bandpointer
     if (bandpointer == 0) then
-        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0,RMAX,&
+        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,newchempot,TPTS,RLATT,E0,R0,RMAX,&
         &ULCN,newnu,nuzero,BETA,newDELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,&
         &NUMCHEMTYPES,ALAT)
     endif
@@ -261,11 +364,11 @@ program TB
         allocate(SORTEDEIGVALS(uniquecounter))
         SORTEDEIGVALS = UNIQUEEIGVALS(1:uniquecounter)
 
-        call INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
+        call INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity)
     endif
 	!---------------------------------------------------------------------------------------------
 
-    call NUM_DEN(EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI,NUME,lorentzbroad)
+    call NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
 
 	!------------------------------------------------------------------------------------------------------------------
 
@@ -686,7 +789,7 @@ program TB
 
     end subroutine BANDS
 
-    subroutine INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity,intnumdensity)
+    subroutine INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity)
         implicit none
 
         integer, allocatable, dimension (:) :: multiplicity
@@ -722,10 +825,10 @@ program TB
     end subroutine INT_NUM_DEN
 
     ! --------------------------------------------------------------------------------------------------------------------------------
-    subroutine NUM_DEN(EIGENVALUES,EIGENVECTORS,numdensityperatom,numdensity,NUMT,NUMK,PI,NUME,lorentzbroad)
+    subroutine NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
         implicit none
 
-        integer :: i, j, k, NUMT, NUMK, NUME
+        integer :: i, j, k, NUMT, NUMK, NUME, metalorno
         real*8, allocatable, dimension(:,:) :: numdensityperatom, numdensity
         real*8 :: PI, lorentzbroad, EIGENVALUES(4*NUMT*NUMK), energyintervals
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK)
@@ -761,24 +864,45 @@ program TB
             end do
         end do
 
-        open(1, file = 'numdensityperatom.txt', action = 'write')
-        do j = 1, NUME+1
-            write (1,105) (numdensityperatom(i,j), i = 1,1+NUMT)
-        end do
-        105 format(41F17.8)
-        close(1)
+        if (metalorno == 0) then
+            open(1, file = 'numdensityperatom.txt', action = 'write')
+            do j = 1, NUME+1
+                write (1,105) (numdensityperatom(i,j), i = 1,1+NUMT)
+            end do
+            105 format(41F17.8)
+            close(1)
 
-        ! Calculation of the full density of states 
-        do i = 1, NUMT
-            numdensity(2,:) = numdensity(2,:) + (1.0/NUMT)*numdensityperatom(1+i,:) ! 1/NUMT for normalization
-        end do
+            ! Calculation of the full density of states 
+            do i = 1, NUMT
+                numdensity(2,:) = numdensity(2,:) + (1.0/NUMT)*numdensityperatom(1+i,:) ! 1/NUMT for normalization
+            end do
 
-        open(1, file = 'numdensity.txt', action = 'write')
-        do j = 1, NUME+1
-            write (1,106) (numdensity(i,j), i = 1,2)
-        end do
-        106 format(3F17.8)
-        close(1)
+            open(1, file = 'numdensity.txt', action = 'write')
+            do j = 1, NUME+1
+                write (1,106) (numdensity(i,j), i = 1,2)
+            end do
+            106 format(3F17.8)
+            close(1)
+        else if (metalorno == 1) then ! A simple workaround so that we get different files for metals and SCs
+            open(1, file = 'metalnumdensityperatom.txt', action = 'write')
+            do j = 1, NUME+1
+                write (1,105) (numdensityperatom(i,j), i = 1,1+NUMT)
+            end do
+            205 format(41F17.8)
+            close(1)
+
+            ! Calculation of the full density of states 
+            do i = 1, NUMT
+                numdensity(2,:) = numdensity(2,:) + (1.0/NUMT)*numdensityperatom(1+i,:) ! 1/NUMT for normalization
+            end do
+
+            open(1, file = 'metalnumdensity.txt', action = 'write')
+            do j = 1, NUME+1
+                write (1,106) (numdensity(i,j), i = 1,2)
+            end do
+            206 format(3F17.8)
+            close(1)
+        endif
 
     end subroutine NUM_DEN
     
