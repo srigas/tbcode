@@ -747,18 +747,9 @@ program TB
             do i = 0, NUME
                 numdensityperatom(1+k,i+1) = 0.0
                 do j = 1, 4*NUMT*NUMK
-                    if (EIGENVALUES(j) > 0.0) then ! the 0.0 check is due to the chemical potential
-                        numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + (lorentzbroad/pi)*&
-                        &((abs(EIGENVECTORS(k,j))**2 + abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) -&
-                        &EIGENVALUES(j))**2 + lorentzbroad**2) + (abs(EIGENVECTORS(k+2*NUMT,j))**2 +&
-                        &abs(EIGENVECTORS(k+3*NUMT,j))**2)/((numdensityperatom(1,i+1) +EIGENVALUES(j))**2 + lorentzbroad**2))
-                    else if (EIGENVALUES(j) == 0.0) then
-                        ! the 0.5 is inserted to avoid double counting in the absence of superconducting effects for zero eigenvalues
-                        numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + 0.5*(lorentzbroad/pi)*&
-                        &((abs(EIGENVECTORS(k,j))**2 + abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) -&
-                        &EIGENVALUES(j))**2 + lorentzbroad**2) + (abs(EIGENVECTORS(k+2*NUMT,j))**2 +&
-                        &abs(EIGENVECTORS(k+3*NUMT,j))**2)/((numdensityperatom(1,i+1) +EIGENVALUES(j))**2 + lorentzbroad**2))
-                    endif
+                    numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + (lorentzbroad/pi)*&
+                    &((abs(EIGENVECTORS(k,j))**2 + abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) -&
+                    &EIGENVALUES(j))**2 + lorentzbroad**2)) ! Sum over all eigenvalues with |u| as weights
                 end do
             end do
         end do
@@ -965,24 +956,34 @@ program TB
 
         CI = (0.0,1.0) ! setting the imaginary unit
         PI = 4.D0*atan(1.D0) ! setting π
-        KB = 8.617385D-5 ! setting Boltzmann's constant - in eVs, change if necessary
+        KB = 1.0 ! The value in eVs is 8.617385D-5
 
     end subroutine CONSTANTS
 
     function FERMI(E,T,KB) result(fE)
         implicit none
         real*8, intent(in) :: E, T
-        real*8 :: fE, KB, expon
+        real*8 :: fE, KB, term
 
         if (T == 0.0) then
             if (E < 0.0) then
                 fE = 1.0
+            else if (E == 0.0) then
+                fE = 0.5
             else
                 fE = 0.0
             endif
         else
-            expon = exp(E/(KB*T))
-            fE = 1.0/(expon+1.0)
+            term = E/(KB*T)
+            ! 460.0 is a check to see if this exponential is
+            ! 200ln(10), i.e. so large that fortran can't process it, since the limit is ~300ln(10)
+            if (term > 460.0) then
+                fE = 0.0
+            else if (term < -460.0) then
+                fE = 1.0
+            else
+                fE = 1.0/(exp(term)+1.0)
+            endif
         endif
 		
     end function FERMI
