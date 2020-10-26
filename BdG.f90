@@ -156,34 +156,23 @@ program TB
             EIGENVECTORS(:,ini:fin) = HAMILTONIAN
         end do
 
+        newchempot = chempot
         do i = 1, NUMT
             nuup(i) = 0.0
             nudown(i) = 0.0
+            DOSATMU(i) = 0.0
 
             do j = 1, 4*NUMT*NUMK
                 nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
                 nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+
+                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
+                &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
             end do
 
             newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
             diffN(i) = abs(newnu(i) - nu(i))
-        end do
 
-        ! Calculates DoS per atom at E = chempot (previous)
-        do i = 1, NUMT
-            DOSATMU(i) = 0.0
-            do j = 1, 4*NUMT*NUMK
-                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*((abs(EIGENVECTORS(i,j))**2 +&
-                &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
-            end do
-        end do
-
-        do i = 1, NUMT
-            DOSATMU(i) = DOSATMU(i)/NUMK ! Normalization
-        end do
-
-        newchempot = chempot
-        do i = 1 , NUMT
             newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
         end do
         diffchem = abs(chempot-newchempot)
@@ -239,6 +228,7 @@ program TB
 
 		! At that point all the eigenvalues are in the form (.,.,.,.,...) and all the eigenvectors are 4*NUMT*NUMK columns of 4*NUMT rows
 
+        newchempot = chempot
 		! Calculates the charges n-up, n-down and n as well as Delta and chempot
         do i = 1, NUMT
             nuup(i) = 0.0
@@ -264,10 +254,6 @@ program TB
             newDELTA(i) = newDELTA(i)/NUMK ! Normalization
             diffD(i) = abs(abs(newDELTA(i)) - abs(DELTA(i)))
 
-        end do
-
-        newchempot = chempot
-        do i = 1 , NUMT
             newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
         end do
         diffchem = abs(chempot-newchempot)
@@ -303,6 +289,7 @@ program TB
     end do
 
 	! At that point, we calculate the density, magnetization and D for the final Hamiltonian using the converged values.
+    newchempot = chempot
     do i = 1, NUMT
         nuup(i) = 0.0
         nudown(i) = 0.0
@@ -325,17 +312,13 @@ program TB
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
         newDELTA(i) = newDELTA(i)/NUMK ! Final D per atom
         magnet(i) = (nuup(i) - nudown(i))/NUMK ! Final magnetization
+        newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
 
         print *, 'n = ', newnu(i), 'for atom No.1', i
         print *, 'D = ', newDELTA(i), 'for atom No.1', i
         print *, 'M = ', magnet(i), 'for atom No.1', i
     end do
-
-    newchempot = chempot
-    do i = 1 , NUMT
-        newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
-    end do
-
+    
     print *, 'chempot = ', newchempot
 
     ! Routine for making band diagrams
