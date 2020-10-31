@@ -314,9 +314,9 @@ program TB
         magnet(i) = (nuup(i) - nudown(i))/NUMK ! Final magnetization
         newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
 
-        print *, 'n = ', newnu(i), 'for atom No.1', i
-        print *, 'D = ', newDELTA(i), 'for atom No.1', i
-        print *, 'M = ', magnet(i), 'for atom No.1', i
+        print *, 'n = ', newnu(i), 'for atom No. ', i
+        print *, 'D = ', newDELTA(i), 'for atom No. ', i
+        print *, 'M = ', magnet(i), 'for atom No. ', i
     end do
     
     print *, 'chempot = ', newchempot
@@ -365,6 +365,24 @@ program TB
         print *, 'Initiating Green functions calculations.'
         call GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,lorentzbroad)
     endif
+
+    ! Prepares two config files to be used by the impurity program
+    open (1, file = 'impconfig.dat', action = 'write')
+        write (1,*) NUMIMP, '! Number of impurities.'
+        write (1,*) NUME, '! Number of energy values.'
+    close(1)
+
+    open (1, file = 'impatoms.dat', action = 'write')
+    do i = 1, NUMIMP
+        j = IMPPTSVAR(4,i)
+        write (1,135) E0(j), BETA(j), REAL(newDELTA(j)), AIMAG(newDELTA(j))
+    end do
+    write (1,*) '------------------------------------------------------------'
+    write (1,*) 'Format: E_0,           B_0,          Re(D),         Im(D)'
+    write (1,*) 'Please insert the corresponding impurity value next to each element.'
+    close(1)
+    135 format(4F15.7)
+    close(1)
 
     contains
 
@@ -641,10 +659,12 @@ program TB
             end do
 
             ! Writes the Green impurity elements on greenimp.txt
-            do j = 1, 4*NUMIMP
-                write (1,109) (GREENR(i,j), i = 1,4*NUMIMP)
+            do i = 1, 4*NUMIMP
+                do j = 1, 4*NUMIMP
+                    write (1, 109) GREENR(i,j)
+                end do
             end do
-            109 format(41F17.6)
+            109 format(F17.8,F17.8)
 
             if (dosorno == 0) then
                 do i = 1, NUMT ! Calculation of full density
