@@ -375,13 +375,11 @@ program TB
     open (1, file = 'impatoms.dat', action = 'write')
     do i = 1, NUMIMP
         j = IMPPTSVAR(4,i)
-        write (1,135) E0(j), BETA(j), REAL(newDELTA(j)), AIMAG(newDELTA(j))
+        write (1,'(4F15.7)') E0(j), BETA(j), REAL(newDELTA(j)), AIMAG(newDELTA(j))
     end do
     write (1,*) '------------------------------------------------------------'
     write (1,*) 'Format: E_0,           B_0,          Re(D),         Im(D)'
     write (1,*) 'Please insert the corresponding impurity value next to each element.'
-    close(1)
-    135 format(4F15.7)
     close(1)
 
     contains
@@ -661,10 +659,9 @@ program TB
             ! Writes the Green impurity elements on greenimp.txt
             do i = 1, 4*NUMIMP
                 do j = 1, 4*NUMIMP
-                    write (1, 109) GREENR(i,j)
+                    write (1, '(F17.8,F17.8)') GREENR(i,j)
                 end do
             end do
-            109 format(F17.8,F17.8)
 
             if (dosorno == 0) then
                 do i = 1, NUMT ! Calculation of full density
@@ -679,16 +676,17 @@ program TB
         if (dosorno == 0) then
             open(1, file = 'greendensityperatom.txt', action = 'write')
             do j = 1, NUME+1 ! Energies = Intervals + 1
-                write (1,110) (greendensityperatom(i,j), i = 1,1+NUMT)
+                do i = 1, NUMT+1
+                    write (1,'(F17.8)',advance='no') greendensityperatom(i,j)
+                end do
+                write (1,*)
             end do
-            110 format(41F17.8)
             close(1)
 
             open(1, file = 'greendensity.txt', action = 'write')
             do j = 1, NUME+1 ! Energies = Intervals + 1
-                write (1,111) (greendensity(i,j), i = 1,2)
+                write (1,'(2F17.8)') greendensity(1,j), greendensity(2,j)
             end do
-            111 format(3F17.8)
             close(1)
         endif
 
@@ -774,9 +772,17 @@ program TB
                 call zheev ('N', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
                 
                 if (intpointer == 0) then
-                    write (2,121) HORINT, W ! W = Eigenvalues
+                    write (2,'(F17.8)', advance='no') HORINT
+                    do m = 1, 4*NUMT
+                        write (2,'(F17.8)', advance='no') W(m)
+                    end do
+                    write (2,*)
                 else 
-                    write (2,121) KPOINT, HORINT, W
+                    write (2,'(4F17.8)', advance='no') KPOINT, HORINT
+                    do m = 1, 4*NUMT
+                        write (2,'(F17.8)', advance='no') W(m)
+                    end do
+                    write (2,*)
                 endif
 
                 if (j /= checker) then
@@ -787,7 +793,6 @@ program TB
             end do
 
         end do
-        121 format(5F17.8)
         close(2)
 
     end subroutine BANDS
@@ -820,9 +825,8 @@ program TB
 
         open(1, file = 'intnumdensity.txt', action = 'write')
         do j = 1, uniquecounter
-            write (1,104) (intnumdensity(i,j), i = 1,2)
+            write (1,'(2F17.8)',advance='no') intnumdensity(1,j), intnumdensity(2,j)
         end do
-        104 format(3F17.8)
         close(1)
 
     end subroutine INT_NUM_DEN
@@ -870,9 +874,11 @@ program TB
         if (metalorno == 0) then
             open(1, file = 'numdensityperatom.txt', action = 'write')
             do j = 1, NUME+1
-                write (1,105) (numdensityperatom(i,j), i = 1,1+NUMT)
+                do i = 1, NUMT+1
+                    write (1,'(F17.8)',advance='no') numdensityperatom(i,j)
+                end do
+                write (1,*)
             end do
-            105 format(41F17.8)
             close(1)
 
             ! Calculation of the full density of states 
@@ -882,16 +888,17 @@ program TB
 
             open(1, file = 'numdensity.txt', action = 'write')
             do j = 1, NUME+1
-                write (1,106) (numdensity(i,j), i = 1,2)
+                write (1,'(2F17.8)') numdensity(1,j), numdensity(2,j)
             end do
-            106 format(3F17.8)
             close(1)
         else if (metalorno == 1) then ! A simple workaround so that we get different files for metals and SCs
             open(1, file = 'metalnumdensityperatom.txt', action = 'write')
             do j = 1, NUME+1
-                write (1,105) (numdensityperatom(i,j), i = 1,1+NUMT)
+                do i = 1, NUMT+1
+                    write (1,'(F17.8)',advance='no') numdensityperatom(i,j)
+                end do
+                write (1,*)
             end do
-            205 format(41F17.8)
             close(1)
 
             ! Calculation of the full density of states 
@@ -901,9 +908,8 @@ program TB
 
             open(1, file = 'metalnumdensity.txt', action = 'write')
             do j = 1, NUME+1
-                write (1,106) (numdensity(i,j), i = 1,2)
+                write (1,'(2F17.8)') numdensity(1,j), numdensity(2,j)
             end do
-            206 format(3F17.8)
             close(1)
         endif
 
