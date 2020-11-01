@@ -113,18 +113,17 @@ program BDG_IMP
             end do
             do i = 1, 4*NUMIMP
                 do j = 1, 4*NUMIMP
-                    write (1,109) GREEN(i,j)
+                    write (1,'(F17.8,F17.8)') GREEN(i,j)
                 end do  
             end do
         else
             do i = 1, 4*NUMIMP
                 do j = 1, 4*NUMIMP
-                    write (1,109) GREEN(i,j)
+                    write (1,'(F17.8,F17.8)') GREEN(i,j)
                 end do  
             end do
         endif
         close(1)
-        109 format(F17.8,F17.8)
 
     end do
 
