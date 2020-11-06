@@ -3,11 +3,14 @@ program BDG_IMP
 
     integer :: i, j, NUME, NUMIMP, IE, INFO
     integer, allocatable, dimension(:) :: IPIV
-    real*8 :: tempval1, tempval2, tempval3, tempval4
-    real*8, allocatable, dimension(:) :: E0, BETA, E0IMP, BETAIMP
-    complex*16 :: ONE, MINUSONE
+    real*8 :: PI, KB, tempval1, tempval2
+    real*8, allocatable, dimension(:) :: E0, E0IMP
+    real*8, allocatable, dimension(:,:) :: BETA, BETAIMP
+    complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), ONE, MINUSONE, posham(2,2)
     complex*16, allocatable, dimension(:) :: DELTA, DELTAIMP
     complex*16, allocatable, dimension(:,:) :: GREEN, HAMIMP, IDENTITY
+
+    call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants.
 
     ! Reads the configuration info from the BdG.f90 output
     open(1, file = 'impconfig.dat', action = 'read')
@@ -17,8 +20,8 @@ program BDG_IMP
 
     allocate(E0(NUMIMP))
     allocate(E0IMP(NUMIMP))
-    allocate(BETA(NUMIMP))
-    allocate(BETAIMP(NUMIMP))
+    allocate(BETA(3,NUMIMP))
+    allocate(BETAIMP(3,NUMIMP))
     allocate(DELTA(NUMIMP))
     allocate(DELTAIMP(NUMIMP))
     allocate(GREEN(4*NUMIMP,4*NUMIMP))
@@ -29,32 +32,38 @@ program BDG_IMP
 
     open(1, file = 'impatoms.dat', action = 'read')
     do i = 1, NUMIMP
-        read (1,*) E0(i), E0IMP(i), BETA(i), BETAIMP(i), tempval1, tempval2, tempval3, tempval4
-        DELTA(i) = cmplx(tempval1, tempval3)
-        DELTAIMP(i) = cmplx(tempval2, tempval4)
+        read (1,*) E0(i), BETA(1,i), BETA(2,i), BETA(3,i), tempval1, tempval2
+        DELTA(i) = cmplx(tempval1, tempval2)
+        read (1,*) E0IMP(i), BETAIMP(1,i), BETAIMP(2,i), BETAIMP(3,i), tempval1, tempval2
+        DELTAIMP(i) = cmplx(tempval1, tempval2)
     end do
     close(1)
+
+    HAMIMP(:,:) = (0.0,0.0)
 
     ! Constructs the ΔH matrix
     do i = 1, NUMIMP
 
-        HAMIMP(1 + (i-1)*4,1 + (i-1)*4) = E0IMP(i) - E0(i) + BETAIMP(i) - BETA(i)
-        HAMIMP(1 + (i-1)*4,2 + (i-1)*4) = 0.0 ! If spin-flip effects are ignored
-        HAMIMP(1 + (i-1)*4,3 + (i-1)*4) = 0.0
+        posham = (E0IMP(i) - E0(i))*IdentityPauli - (BETAIMP(1,i)-BETA(1,i))*xPauli - (BETAIMP(2,i)-BETA(2,i))*yPauli -&
+        & (BETAIMP(3,i)-BETA(3,i))*zPauli
+
+        HAMIMP(1 + (i-1)*4,1 + (i-1)*4) = posham(1,1)
+        HAMIMP(1 + (i-1)*4,2 + (i-1)*4) = posham(1,2)
+        !HAMIMP(1 + (i-1)*4,3 + (i-1)*4) = 0.0
         HAMIMP(1 + (i-1)*4,4 + (i-1)*4) = DELTAIMP(i) - DELTA(i)
 
-        HAMIMP(2 + (i-1)*4,1 + (i-1)*4) = 0.0 ! If spin-flip effects are ignored
-        HAMIMP(2 + (i-1)*4,2 + (i-1)*4) = E0IMP(i) - E0(i) - BETAIMP(i) + BETA(i)
+        HAMIMP(2 + (i-1)*4,1 + (i-1)*4) = posham(2,1)
+        HAMIMP(2 + (i-1)*4,2 + (i-1)*4) = posham(2,2)
         HAMIMP(2 + (i-1)*4,3 + (i-1)*4) = HAMIMP(1 + (i-1)*4,4 + (i-1)*4)
-        HAMIMP(2 + (i-1)*4,4 + (i-1)*4) = 0.0
+        !HAMIMP(2 + (i-1)*4,4 + (i-1)*4) = 0.0
 
-        HAMIMP(3 + (i-1)*4,1 + (i-1)*4) = 0.0
+        !HAMIMP(3 + (i-1)*4,1 + (i-1)*4) = 0.0
         HAMIMP(3 + (i-1)*4,2 + (i-1)*4) = CONJG(HAMIMP(1 + (i-1)*4,4 + (i-1)*4))
         HAMIMP(3 + (i-1)*4,3 + (i-1)*4) = -HAMIMP(1 + (i-1)*4,1 + (i-1)*4)
         HAMIMP(3 + (i-1)*4,4 + (i-1)*4) = CONJG(HAMIMP(1 + (i-1)*4,2 + (i-1)*4))
 
         HAMIMP(4 + (i-1)*4,1 + (i-1)*4) = CONJG(HAMIMP(2 + (i-1)*4,3 + (i-1)*4))
-        HAMIMP(4 + (i-1)*4,2 + (i-1)*4) = 0.0
+        !HAMIMP(4 + (i-1)*4,2 + (i-1)*4) = 0.0
         HAMIMP(4 + (i-1)*4,3 + (i-1)*4) = CONJG(HAMIMP(2 + (i-1)*4,1 + (i-1)*4))
         HAMIMP(4 + (i-1)*4,4 + (i-1)*4) = -CONJG(HAMIMP(2 + (i-1)*4,2 + (i-1)*4))
 
@@ -64,14 +73,9 @@ program BDG_IMP
     do IE = 1, NUME+1
         
         ! Constructs a 4*NUMIMP x 4*NUMIMP Identity matrix
+        IDENTITY(:,:) = (0.0,0.0)
         do i = 1, 4*NUMIMP
-            do j = 1, 4*NUMIMP
-                if (i == j) then
-                    IDENTITY(i,j) = (1.0,0.0)
-                else
-                    IDENTITY(i,j) = (0.0,0.0)
-                endif
-            end do
+            IDENTITY(i,i) = (1.0,0.0)
         end do
     
         ! This reads the G_0 matrix from the output greenimp.txt of BdG.f90 for each energy E
@@ -126,5 +130,35 @@ program BDG_IMP
         close(1)
 
     end do
+
+    contains
+
+    subroutine CONSTANTS(s_0,s_1,s_2,s_3,CI,PI,KB) ! Sets some global constants
+        implicit none
+        complex*16 :: s_0(2,2), s_1(2,2), s_2(2,2), s_3(2,2), CI
+        real*8 :: PI, KB
+        
+        s_0(1,1) = (1.0,0.0)
+        s_0(1,2) = (0.0,0.0)
+        s_0(2,1) = (0.0,0.0)
+        s_0(2,2) = (1.0,0.0)
+        s_1(1,1) = (0.0,0.0)
+        s_1(1,2) = (1.0,0.0)
+        s_1(2,1) = (1.0,0.0)
+        s_1(2,2) = (0.0,0.0)
+        s_2(1,1) = (0.0,0.0)
+        s_2(1,2) = (0.0,-1.0)
+        s_2(2,1) = (0.0,1.0)
+        s_2(2,2) = (0.0,0.0)
+        s_3(1,1) = (1.0,0.0)
+        s_3(1,2) = (0.0,0.0)
+        s_3(2,1) = (0.0,0.0)
+        s_3(2,2) = (-1.0,0.0)
+
+        CI = (0.0,1.0) ! setting the imaginary unit
+        PI = 4.D0*atan(1.D0) ! setting π
+        KB = 1.0 ! The value in eVs is 8.617385D-5
+
+    end subroutine CONSTANTS
 
 end program BDG_IMP

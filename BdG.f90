@@ -7,8 +7,8 @@ program TB
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
 	&chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad, diffchem, newchempot
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
-	& UNIQUEEIGVALS, BETA, magnet, VSUPCOND, nuup, nudown, diffN, diffD, DOSATMU
-    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, LHOPS, PREFACTORS, NNDIS
+	& UNIQUEEIGVALS, magnet, VSUPCOND, nuup, nudown, diffN, diffD, DOSATMU
+    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, BETA, LHOPS, PREFACTORS, NNDIS
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), inidelta
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA, METALDELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
@@ -74,7 +74,7 @@ program TB
     allocate(nuzero(NUMT)) ! NUMT x 1 column with the charges n_0 of each basis atom
     allocate(nu(NUMT)) ! NUMT x 1 column with the charges n of each basis atom
     allocate(newnu(NUMT)) ! NUMT x 1 column with the charges n of each basis atom
-    allocate(BETA(NUMT)) ! NUMT x 1 column with the B for each basis atom
+    allocate(BETA(3,NUMT)) ! NUMT x 3 matrix with the B_x, B_y, B_z for each basis atom
     allocate(diffN(NUMT))
     allocate(diffD(NUMT))
     allocate(magnet(NUMT))
@@ -89,7 +89,7 @@ program TB
 
     open (1, file = 'basisvectors.dat', action = 'read')
     do i = 1,NUMT
-        read(1,*) TPTS(1:3,i), CHEMTYPE(i), E0(i), ULCN(i), nuzero(i), BETA(i), VSUPCOND(i)
+        read(1,*) TPTS(1:3,i), CHEMTYPE(i), E0(i), ULCN(i), nuzero(i), BETA(1,i), BETA(2,i), BETA(3,i), VSUPCOND(i)
     end do
     close(1)
 
@@ -145,8 +145,8 @@ program TB
                 end do
             end do
 
-            call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,METALDELTA,&
-            &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+            call HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,&
+            &METALDELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
 
             call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO)
 
@@ -213,8 +213,8 @@ program TB
                 end do
             end do
 
-            call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
-            &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+            call HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,&
+            &BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
 
             call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
 
@@ -276,8 +276,8 @@ program TB
             end do
         end do
 
-        call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
-        &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+        call HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,&
+        &BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
 
         call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
 
@@ -327,7 +327,7 @@ program TB
     if (bandpointer == 0) then
         call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,newchempot,TPTS,RLATT,E0,R0,RMAX,&
         &ULCN,newnu,nuzero,BETA,newDELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,&
-        &NUMCHEMTYPES,ALAT)
+        &NUMCHEMTYPES,ALAT,xPauli,yPauli)
     endif
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
@@ -375,11 +375,13 @@ program TB
     open (1, file = 'impatoms.dat', action = 'write')
     do i = 1, NUMIMP
         j = IMPPTSVAR(4,i)
-        write (1,'(4F15.7)') E0(j), BETA(j), REAL(newDELTA(j)), AIMAG(newDELTA(j))
+        write (1,'(6F15.7, A, I)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), REAL(newDELTA(j)), &
+        &AIMAG(newDELTA(j)), '    ! Impurity No. ', i
+        write (1,*)
     end do
-    write (1,*) '------------------------------------------------------------'
-    write (1,*) 'Format: E_0,           B_0,          Re(D),         Im(D)'
-    write (1,*) 'Please insert the corresponding impurity value next to each element.'
+    write (1,'(A)') '------------------------------------------------------------'
+    write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,           Re(D),         Im(D)'
+    write (1,'(A)') 'Please insert the corresponding impurity value next to each element.'
     close(1)
 
     contains
@@ -437,15 +439,15 @@ program TB
 
     end subroutine HOPPS
 
-    subroutine HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,&
-        &KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+    subroutine HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
+        &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
         implicit none
         real*8, intent(in) :: KPOINT(3)
         integer :: NUMT, i, j, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
-        real*8 :: R0, RMAX, chempot, RPOINT(3), E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), TTPRIME(3), &
+        real*8 :: R0, RMAX, chempot, RPOINT(3), E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(3,NUMT), TTPRIME(3), &
         &TPTS(3,NUMT), RLATT(3,IRLATTMAX), PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), lambda
-        complex*16 :: zPauli(2,2), IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, DELTA(NUMT),&
-        &expon, HAMILTONIAN(4*NUMT,4*NUMT)
+        complex*16 :: xPauli(2,2), yPauli(2,2), zPauli(2,2), IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, &
+        DELTA(NUMT), expon, HAMILTONIAN(4*NUMT,4*NUMT)
 		
 		do i = 1, NUMT
 			do j = 1, NUMT
@@ -458,7 +460,8 @@ program TB
 
 					! These construct h(r-r')
 					if (norm2(RPOINT+TTPRIME) == 0.0) then ! This case corresponds to t = t', R = 0
-						positionhamiltonian = (E0(j) - chempot + ULCN(j)*(nu(j) - nuzero(j)))*IdentityPauli - BETA(j)*zPauli
+						positionhamiltonian = (E0(j) - chempot + ULCN(j)*(nu(j) - nuzero(j)))*IdentityPauli -&
+                        &BETA(1,j)*xPauli - BETA(2,j)*yPauli - BETA(3,j)*zPauli
 						deltaterm = DELTA(j) ! This ensures on-site superconducting pairing (s-wave superconductivity)
 					else if (norm2(RPOINT+TTPRIME) < RMAX) then
 						positionhamiltonian = (-lambda*exp(-norm2(RPOINT+TTPRIME)/R0))*IdentityPauli ! Hopping
@@ -694,17 +697,18 @@ program TB
 
     subroutine BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0, &
         &RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,&
-        &NUMCHEMTYPES,ALAT)
+        &NUMCHEMTYPES,ALAT,xPauli,yPauli)
         implicit none
 
         integer :: NUMDIR, i, io, j, m, n, NUMT, LWORK, INFO, intpointer, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), &
         &NUMCHEMTYPES, checker
         integer, allocatable, dimension(:) :: KINTS
         real*8 :: DIR(3), KPOINT(3), HORINT, W(4*NUMT), RWORK(3*(4*NUMT) - 2), chempot, TPTS(3,NUMT), &
-        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(NUMT), &
+        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(3,NUMT), &
         &PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), ALAT
         real*8, allocatable, dimension(:,:) :: INPOINT, OUTPOINT
-        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), DELTA(NUMT)
+        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), xPauli(2,2),&
+        &yPauli(2,2), DELTA(NUMT)
 
         ! The following reads the number of basis vectors from a file named basisvectors.dat
         NUMDIR = 0
@@ -765,8 +769,8 @@ program TB
                     end do
                 end do
 
-                call HAM(zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,&
-                &DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+                call HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,&
+                &nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
 
                 ! N because we only want eigenvalues and not eigenvectors
                 call zheev ('N', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
