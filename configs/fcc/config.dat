@@ -5,7 +5,7 @@
 50,50,50 ! N_x, N_y, N_z
 0.8 ! R_max
 1 ! R_0
-3 ! NCELLS
+1 ! NCELLS
 0.0 ! Temperature
 0.9 ! Initial Chempot value
 0.8 ! Initial guess for the charges

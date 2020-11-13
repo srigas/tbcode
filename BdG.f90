@@ -1,23 +1,28 @@
 program TB
     implicit none
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer, intnumdenpointer, NUME, metalorno
-    integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE
-    integer, allocatable, dimension(:,:) :: IMPPTSVAR
-    real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, &
-	&chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad, diffchem, newchempot
+    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer, intnumdenpointer, NUME, metalorno, JATOM, rcheck,&
+    & MAXNEIGHB, FTIMO
+    integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE, NEIGHBNUM
+    integer, allocatable, dimension(:,:) :: IMPPTSVAR, JTYPE
+    real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, RPOINT(3), TTPRIME(3),&
+	&chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad, diffchem, newchempot, lambda, TOL
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, magnet, VSUPCOND, nuup, nudown, diffN, diffD, DOSATMU
-    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, BETA, LHOPS, PREFACTORS, NNDIS
+    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, BETA, LHOPS, PREFACTORS, NNDIS, HOPPVALS
+    real*8, allocatable, dimension(:,:,:) :: RCONNECT
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), inidelta
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA, METALDELTA
-    complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS
+    complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS, HAMILTONIANPREP
+    complex*16, allocatable, dimension(:,:,:) :: EXPONS
 
     ! Important notice about write format. Example: format(5F17.8)
     ! 5F -> 5 = number of entries before changing row, F is because we want numbers
     ! 17 = Total digits of entry. E.g. if entry = PI, then 3. are the first two digits, therefore 17-2=15 are remaining.
     ! Of these 15, the 8 (that's what the .8 stands for) are reserved as decimals. The 15-8=7 remaining are spaces before the next entry.
 
+    TOL = 0.0001 ! The fault tolerance for lattice vectors' norms
+    
     call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants.
 
     open(1, file = 'config.dat', action = 'read')
@@ -108,6 +113,7 @@ program TB
     allocate(EIGENVECTORS(4*NUMT,4*NUMT*NUMK))
     allocate(EIGENVALUES(4*NUMT*NUMK))
     allocate(HAMILTONIAN(4*NUMT,4*NUMT))
+    allocate(HAMILTONIANPREP(4*NUMT,4*NUMT))
 
     call RPTS(a_1,a_2,a_3,NCELLS,RLATT,IRLATTMAX) ! Here we construct the RLATT Matrix consisting of the lattice sites
 
@@ -120,6 +126,76 @@ program TB
     LWORK = 4*NUMT*(4*NUMT+1)
     allocate(WORK(LWORK))
 	!-------------------------------------------------
+
+    ! That part calculates the number of neighbours that belong in the ith atom's cluster, excluding itself
+    allocate(NEIGHBNUM(NUMT))
+    NEIGHBNUM(1:NUMT) = 0
+
+    do i = 1, NUMT
+        do j = 1, NUMT
+
+            TTPRIME = TPTS(1:3,j) - TPTS(1:3,i)
+
+            do IRLATT = 1, IRLATTMAX
+                RPOINT = RLATT(1:3,IRLATT)
+
+                if (norm2(RPOINT+TTPRIME) < (RMAX+TOL) .and. norm2(RPOINT+TTPRIME) > TOL) then
+                    NEIGHBNUM(i) = NEIGHBNUM(i) + 1
+                end if
+            end do
+                
+        end do
+    end do
+
+    ! This part catalogues all the nearest neighbour distances for each atom i, while also listing
+    ! what type of neighbours they are, excluding the on-site interaction
+    MAXNEIGHB = MAXVAL(NEIGHBNUM)
+    allocate(JTYPE(MAXNEIGHB,NUMT))
+    allocate(RCONNECT(3,MAXNEIGHB,NUMT))
+
+    RCONNECT(1:3,:,:) = 0.0
+    JTYPE(:,:) = 0
+    
+    do i = 1, NUMT
+        rcheck = 1
+        do j = 1, NUMT
+
+            TTPRIME = TPTS(1:3,j) - TPTS(1:3,i)
+
+            do IRLATT = 1, IRLATTMAX
+                RPOINT = RLATT(1:3,IRLATT)
+
+                if (norm2(RPOINT+TTPRIME) < (RMAX+TOL) .and. norm2(RPOINT+TTPRIME) > TOL) then
+                    RCONNECT(1:3,rcheck,i) = RPOINT + TTPRIME
+                    JTYPE(rcheck,i) = j
+                    rcheck = rcheck + 1
+                end if
+            end do
+                
+        end do
+    end do
+
+    ! We finally calculate the hopping elements, as well as the fourier exponentials, so that we don't have to calculate
+    ! them after every self-consistency cycle.
+    allocate(EXPONS(NUMK,MAXNEIGHB,NUMT))
+    allocate(HOPPVALS(MAXNEIGHB,NUMT))
+    do kcounter = 1, NUMK
+        KPOINT = KPTS(1:3,kcounter)
+
+        do i = 1, NUMT
+            do j = 1, NEIGHBNUM(i)
+
+                RPOINT = RCONNECT(1:3,j,i)
+                EXPONS(kcounter,j,i) = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT))
+
+                JATOM = JTYPE(j,i)
+                lambda = PREFACTORS(CHEMTYPE(i),CHEMTYPE(JATOM))
+                
+                HOPPVALS(j,i) = -lambda*exp(-norm2(RPOINT)/R0)
+
+            end do
+        end do
+    end do
 
 	! These configurations ensure that the following while loop is initiated
     epsilon = 0.001
@@ -136,17 +212,11 @@ program TB
     print *, 'Initiating METAL self-consistency procedure...'
     do while ((MAXVAL(diffN) > epsilon .or. diffchem > epsilon) .and. reps < maxreps)
 
+        call HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,METALDELTA,HAMILTONIANPREP)
+
         do kcounter = 1, NUMK
-            KPOINT = KPTS(1:3,kcounter)
 
-            do j = 1, 4*NUMT
-                do i = 1, 4*NUMT
-                    HAMILTONIAN(i,j) = (0.0,0.0)
-                end do
-            end do
-
-            call HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,&
-            &METALDELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+            call FOURIERHAM(kcounter,NUMK,HAMILTONIANPREP,EXPONS,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,NUMT,HAMILTONIAN)
 
             call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO)
 
@@ -162,12 +232,14 @@ program TB
             nudown(i) = 0.0
             DOSATMU(i) = 0.0
 
-            do j = 1, 4*NUMT*NUMK
-                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
-                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+            FTIMO = 4*(i-1)
 
-                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
-                &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
+            do j = 1, 4*NUMT*NUMK
+                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(1+FTIMO,j))**2
+                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(4+FTIMO,j))**2
+
+                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(1+FTIMO,j))**2 +&
+                &abs(EIGENVECTORS(2+FTIMO,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
             end do
 
             newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
@@ -203,25 +275,16 @@ program TB
     print *, 'Initiating SC self-consistency procedure...'
     do while ((MAXVAL(diffN) > epsilon .or. MAXVAL(diffD) > epsilon .or. diffchem > epsilon) .and. reps < maxreps) ! Check for convergence or maxreps
 
+        call HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
+
         do kcounter = 1, NUMK
-            KPOINT = KPTS(1:3,kcounter)
 
-			! This loop sets all initial values of H to zero, so that the sum afterwords can work
-            do j = 1, 4*NUMT
-                do i = 1, 4*NUMT
-                    HAMILTONIAN(i,j) = (0.0,0.0)
-                end do
-            end do
+            call FOURIERHAM(kcounter,NUMK,HAMILTONIANPREP,EXPONS,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,NUMT,HAMILTONIAN)
 
-            call HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,&
-            &BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+            call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO)
 
-            call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
-
-			! The eigenvectors are in the form of 4-spinors: (u↑, u↓, v↑, v↓)
-
-            ini = (kcounter-1)*4*NUMT + 1 ! The *4 factors are due spin and particle-hole
-            fin = kcounter*4*NUMT ! The *4 factors are due spin and particle-hole
+            ini = (kcounter-1)*4*NUMT + 1
+            fin = kcounter*4*NUMT
             EIGENVALUES(ini:fin) = W
             EIGENVECTORS(:,ini:fin) = HAMILTONIAN
         end do
@@ -236,16 +299,18 @@ program TB
             newDELTA(i) = (0.0,0.0)
             DOSATMU(i) = 0.0
 
-            do j = 1, 4*NUMT*NUMK
-                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
+            FTIMO = 4*(i-1)
 
-                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+            do j = 1, 4*NUMT*NUMK
+                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(1+FTIMO,j))**2
+
+                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(4+FTIMO,j))**2
 
                 newDELTA(i) = newDELTA(i) -&
-                & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+                & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(1+FTIMO,j)*CONJG(EIGENVECTORS(4+FTIMO,j))
 
-                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
-                &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
+                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(1+FTIMO,j))**2 +&
+                &abs(EIGENVECTORS(2+FTIMO,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
             end do
 
             newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
@@ -266,26 +331,18 @@ program TB
     print *, 'SC self-consistency finished.'
 
 	!At that point we have a good approximation for the charges. We move on to calculate once again the Hamiltonian and then the states density.    
+    call HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
+
     do kcounter = 1, NUMK
-        KPOINT = KPTS(1:3,kcounter)
 
-		! This loop sets all initial values of H to zero, so that the sum afterwords can work
-        do j = 1, 4*NUMT
-            do i = 1, 4*NUMT
-                HAMILTONIAN(i,j) = (0.0,0.0)
-            end do
-        end do
+        call FOURIERHAM(kcounter,NUMK,HAMILTONIANPREP,EXPONS,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,NUMT,HAMILTONIAN)
 
-        call HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,&
-        &BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+        call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO)
 
-        call zheev ('V', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
-
-        ini = (kcounter-1)*4*NUMT + 1 ! The *4 factors are due spin and particle-hole
-        fin = kcounter*4*NUMT ! The *4 factors are due spin and particle-hole
+        ini = (kcounter-1)*4*NUMT + 1
+        fin = kcounter*4*NUMT
         EIGENVALUES(ini:fin) = W
         EIGENVECTORS(:,ini:fin) = HAMILTONIAN
-        
     end do
 
 	! At that point, we calculate the density, magnetization and D for the final Hamiltonian using the converged values.
@@ -297,16 +354,18 @@ program TB
         magnet(i) = 0.0
         DOSATMU(i) = 0.0
 
-        do j = 1, 4*NUMT*NUMK
-            nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
+        FTIMO = 4*(i-1)
 
-            nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(3*NUMT+i,j))**2
+        do j = 1, 4*NUMT*NUMK
+            nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(1+FTIMO,j))**2
+
+            nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(4+FTIMO,j))**2
 
             newDELTA(i) = newDELTA(i) -&
-            & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(3*NUMT+i,j))
+            & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(1+FTIMO,j)*CONJG(EIGENVECTORS(4+FTIMO,j))
 
-            DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
-            &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
+            DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(1+FTIMO,j))**2 +&
+            &abs(EIGENVECTORS(2+FTIMO,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
         end do
 
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
@@ -325,9 +384,8 @@ program TB
     print *, 'To export band diagram data press 0, otherwise press any other number.'
     read *, bandpointer
     if (bandpointer == 0) then
-        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,newchempot,TPTS,RLATT,E0,R0,RMAX,&
-        &ULCN,newnu,nuzero,BETA,newDELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,&
-        &NUMCHEMTYPES,ALAT,xPauli,yPauli)
+        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0, &
+        &ULCN,nu,nuzero,BETA,DELTA,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,ALAT)
     endif
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
@@ -386,12 +444,14 @@ program TB
 
     contains
 
-	subroutine HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
+    subroutine HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
         implicit none
 
         integer :: NUMT, i, j, ITYPE, JTYPE, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
         real*8 :: TTPRIME(3), RPOINT(3), TPTS(3,NUMT), RLATT(3,IRLATTMAX), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), &
-        &PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), NNDIS(NUMCHEMTYPES,NUMCHEMTYPES), expon, R0
+        &PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), NNDIS(NUMCHEMTYPES,NUMCHEMTYPES), expon, R0, TOL
+
+        TOL = 0.0001
 
         open (1, file = 'hoppings.dat', action = 'read')
         do i = 1, NUMCHEMTYPES
@@ -422,7 +482,7 @@ program TB
                             do IRLATT = 1, IRLATTMAX
                                 RPOINT = RLATT(1:3,IRLATT)
 
-                                if (NNDIS(JTYPE,ITYPE) > norm2(RPOINT+TTPRIME) .and. norm2(RPOINT+TTPRIME) > 0.0001) then
+                                if (NNDIS(JTYPE,ITYPE) > norm2(RPOINT+TTPRIME) .and. norm2(RPOINT+TTPRIME) > TOL) then
                                     NNDIS(JTYPE,ITYPE) = norm2(RPOINT+TTPRIME)
                                 endif
 
@@ -439,71 +499,118 @@ program TB
 
     end subroutine HOPPS
 
-    subroutine HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,nuzero,BETA,DELTA,&
-        &IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+    subroutine HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
+        implicit none
+        integer :: NUMT, i, FTIMO
+        real*8 :: chempot, E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(3,NUMT)
+        complex*16 :: xPauli(2,2), yPauli(2,2), zPauli(2,2), IdentityPauli(2,2), helperham(2,2), DELTA(NUMT),&
+        & HAMILTONIANPREP(4*NUMT,4*NUMT)
+
+        HAMILTONIANPREP(:,:) = (0.0,0.0)
+
+        do i = 1, NUMT
+
+            FTIMO = 4*(i-1)
+
+            helperham = (E0(i) - chempot + ULCN(i)*(nu(i) - nuzero(i)))*IdentityPauli -&
+            &BETA(1,i)*xPauli - BETA(2,i)*yPauli - BETA(3,i)*zPauli
+
+            HAMILTONIANPREP(1 + FTIMO, 1 + FTIMO) = helperham(1,1)
+            HAMILTONIANPREP(1 + FTIMO, 2 + FTIMO) = helperham(1,2)
+            !HAMILTONIANPREP(1 + FTIMO, 3 + FTIMO) = (0.0,0.0)
+            HAMILTONIANPREP(1 + FTIMO, 4 + FTIMO) = DELTA(i)
+
+            HAMILTONIANPREP(2 + FTIMO, 1 + FTIMO) = helperham(2,1)
+            HAMILTONIANPREP(2 + FTIMO, 2 + FTIMO) = helperham(2,2)
+            HAMILTONIANPREP(2 + FTIMO, 3 + FTIMO) = DELTA(i)
+            !HAMILTONIANPREP(2 + FTIMO, 4 + FTIMO) = (0.0,0.0)
+
+            !HAMILTONIANPREP(3 + FTIMO, 1 + FTIMO) = (0.0,0.0)
+            HAMILTONIANPREP(3 + FTIMO, 2 + FTIMO) = CONJG(DELTA(i))
+            HAMILTONIANPREP(3 + FTIMO, 3 + FTIMO) = -CONJG(helperham(1,1))
+            HAMILTONIANPREP(3 + FTIMO, 4 + FTIMO) = CONJG(helperham(1,2))
+
+            HAMILTONIANPREP(4 + FTIMO, 1 + FTIMO) = CONJG(DELTA(i))
+            !HAMILTONIANPREP(4 + FTIMO, 2 + FTIMO) = (0.0,0.0)
+            HAMILTONIANPREP(4 + FTIMO, 3 + FTIMO) = CONJG(helperham(2,1))
+            HAMILTONIANPREP(4 + FTIMO, 4 + FTIMO) = -CONJG(helperham(2,2))
+
+        end do
+
+    end subroutine HAMPREP
+
+    subroutine FOURIERHAM(kcounter,NUMK,HAMILTONIANPREP,EXPONS,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,NUMT,HAMILTONIAN)
+        implicit none
+        integer, intent(in) :: kcounter
+        integer :: NUMT, NUMK, i, jneighb, NEIGHBNUM(NUMT), MAXNEIGHB, JATOM, JTYPE(MAXNEIGHB,NUMT), FTIMO, FTJMO
+        real*8 :: HOPPVALS(MAXNEIGHB,NUMT)
+        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), HAMILTONIANPREP(4*NUMT,4*NUMT), EXPONS(NUMK,MAXNEIGHB,NUMT), term
+
+        HAMILTONIAN(:,:) = HAMILTONIANPREP(:,:)
+
+        do i = 1, NUMT
+            FTIMO = 4*(i-1)
+            do jneighb = 1, NEIGHBNUM(i)
+
+                JATOM = JTYPE(jneighb,i)
+                FTJMO = 4*(JATOM-1)
+
+                term = EXPONS(kcounter,jneighb,i)*HOPPVALS(jneighb,i)
+
+                HAMILTONIAN(1 + FTIMO,1 + FTJMO) = HAMILTONIAN(1 + FTIMO,1 + FTJMO) + term
+                !HAMILTONIAN(1 + FTIMO,2 + FTJMO) = HAMILTONIAN(1 + FTIMO,2 + FTJMO) + term
+                !HAMILTONIAN(2 + FTIMO,1 + FTJMO) = HAMILTONIAN(2 + FTIMO,1 + FTJMO) + term
+                HAMILTONIAN(2 + FTIMO,2 + FTJMO) = HAMILTONIAN(2 + FTIMO,2 + FTJMO) + term
+                HAMILTONIAN(3 + FTIMO,3 + FTJMO) = HAMILTONIAN(3 + FTIMO,3 + FTJMO) - term
+                !HAMILTONIAN(3 + FTIMO,4 + FTJMO) = HAMILTONIAN(3 + FTIMO,4 + FTJMO) + term
+                !HAMILTONIAN(4 + FTIMO,3 + FTJMO) = HAMILTONIAN(4 + FTIMO,3 + FTJMO) + term
+                HAMILTONIAN(4 + FTIMO,4 + FTJMO) = HAMILTONIAN(4 + FTIMO,4 + FTJMO) - term
+
+            end do
+        end do
+
+    end subroutine FOURIERHAM
+
+    subroutine RANDOMKHAM(KPOINT,HAMILTONIANPREP,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,NUMT,HAMILTONIAN)
         implicit none
         real*8, intent(in) :: KPOINT(3)
-        integer :: NUMT, i, j, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
-        real*8 :: R0, RMAX, chempot, RPOINT(3), E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(3,NUMT), TTPRIME(3), &
-        &TPTS(3,NUMT), RLATT(3,IRLATTMAX), PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), lambda
-        complex*16 :: xPauli(2,2), yPauli(2,2), zPauli(2,2), IdentityPauli(2,2), positionhamiltonian(2,2), deltaterm, &
-        DELTA(NUMT), expon, HAMILTONIAN(4*NUMT,4*NUMT)
-		
-		do i = 1, NUMT
-			do j = 1, NUMT
-			
-				TTPRIME = TPTS(1:3,j) - TPTS(1:3,i) ! This calculates t - t' for the basis atoms
-                lambda = PREFACTORS(CHEMTYPE(i),CHEMTYPE(j)) ! A different hopping prefactor depending on atom type
+        integer :: NUMT, i, jneighb, MAXNEIGHB, NEIGHBNUM(NUMT), JATOM, JTYPE(MAXNEIGHB,NUMT), FTIMO, FTJMO
+        real*8 :: hopping, HOPPVALS(MAXNEIGHB,NUMT), RPOINT(3), lambda, RCONNECT(3,MAXNEIGHB,NUMT)
+        complex*16 :: expon, HAMILTONIAN(4*NUMT,4*NUMT), HAMILTONIANPREP(4*NUMT,4*NUMT)
 
-				do IRLATT = 1, IRLATTMAX ! This is the summation over all latice points
-					RPOINT = RLATT(1:3,IRLATT)
+        HAMILTONIAN(:,:) = HAMILTONIANPREP(:,:)
 
-					! These construct h(r-r')
-					if (norm2(RPOINT+TTPRIME) == 0.0) then ! This case corresponds to t = t', R = 0
-						positionhamiltonian = (E0(j) - chempot + ULCN(j)*(nu(j) - nuzero(j)))*IdentityPauli -&
-                        &BETA(1,j)*xPauli - BETA(2,j)*yPauli - BETA(3,j)*zPauli
-						deltaterm = DELTA(j) ! This ensures on-site superconducting pairing (s-wave superconductivity)
-					else if (norm2(RPOINT+TTPRIME) < RMAX) then
-						positionhamiltonian = (-lambda*exp(-norm2(RPOINT+TTPRIME)/R0))*IdentityPauli ! Hopping
-						deltaterm = (0.0,0.0) ! This ensures on-site superconducting pairing (s-wave superconductivity)
-					else
-						positionhamiltonian = 0.0*IdentityPauli
-						deltaterm = (0.0,0.0) ! This ensures on-site superconducting pairing (s-wave superconductivity)
-					endif
-					
-					expon = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT+TTPRIME)) ! The e^[-ik(R+t-t')] factor
-					
-					! And now follows the Fourier transform of h(r-r') to H(k)
-					
-					HAMILTONIAN(i,j) = HAMILTONIAN(i,j) + expon*positionhamiltonian(1,1) ! 1-1 block
-                    HAMILTONIAN(i,j+NUMT) = HAMILTONIAN(i,j+NUMT) + expon*positionhamiltonian(1,2) ! 1-2 block, for spinup-spindown interactions
-					! HAMILTONIAN(i,j+2*NUMT), i.e. the 1-3 block, remains zero in any case
-                    HAMILTONIAN(i,j+3*NUMT) = HAMILTONIAN(i,j+3*NUMT) + expon*deltaterm ! 1-4 block, the superconductivity pairing
+        do i = 1, NUMT
+            FTIMO = 4*(i-1)
+            do jneighb = 1, NEIGHBNUM(i)
 
-                    HAMILTONIAN(i+NUMT,j) = HAMILTONIAN(i+NUMT,j) + expon*positionhamiltonian(2,1) ! 2-1 block, for spindown-spinup interactions
-                    HAMILTONIAN(i+NUMT,j+NUMT) = HAMILTONIAN(i+NUMT,j+NUMT) + expon*positionhamiltonian(2,2) ! 2-2 block
-                    HAMILTONIAN(i+NUMT,j+2*NUMT) = HAMILTONIAN(i+NUMT,j+2*NUMT) + expon*deltaterm ! 2-3 block, the superconductivity pairing
-					! HAMILTONIAN(i+NUMT,j+3*NUMT), i.e. the 2-4 block, remains zero in any case
+                RPOINT = RCONNECT(1:3,jneighb,i)
+                JATOM = JTYPE(jneighb,i)
+                FTJMO = 4*(JATOM-1)
 
-					! HAMILTONIAN(i+2*NUMT,j), i.e. the 3-1 block, remains zero in any case
-                    HAMILTONIAN(i+2*NUMT,j+NUMT) = HAMILTONIAN(i+2*NUMT,j+NUMT) + expon*CONJG(deltaterm) ! 3-2 block, the complex conjugate of the superconductivity pairing
-                    HAMILTONIAN(i+2*NUMT,j+2*NUMT) = HAMILTONIAN(i+2*NUMT,j+2*NUMT) - expon*CONJG(positionhamiltonian(1,1)) ! 3-3 block
-                    HAMILTONIAN(i+2*NUMT,j+3*NUMT) = HAMILTONIAN(i+2*NUMT,j+3*NUMT) + expon*CONJG(positionhamiltonian(1,2)) ! 3-4 block, for spinup-spindown interactions
+                hopping = HOPPVALS(jneighb,i)
 
-                    HAMILTONIAN(i+3*NUMT,j) = HAMILTONIAN(i+3*NUMT,j) + expon*CONJG(deltaterm) ! 4-1 block, the complex conjugate of the superconductivity pairing
-					! HAMILTONIAN(i+3*NUMT,j+NUMT), i.e. the 4-2 block, remains zero in any case
-                    HAMILTONIAN(i+3*NUMT,j+2*NUMT) = HAMILTONIAN(i+3*NUMT,j+2*NUMT) + expon*CONJG(positionhamiltonian(2,1)) ! 4-3 block, for spindown-spinup interactions
-                    HAMILTONIAN(i+3*NUMT,j+3*NUMT) = HAMILTONIAN(i+3*NUMT,j+3*NUMT) - expon*CONJG(positionhamiltonian(2,2)) ! 4-4 block
-				end do
-			end do
-		end do
-    end subroutine HAM
+                expon = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT))
+
+                HAMILTONIAN(1 + FTIMO,1 + FTJMO) = HAMILTONIAN(1 + FTIMO,1 + FTJMO) + expon*hopping
+                !HAMILTONIAN(1 + FTIMO,2 + FTJMO) = HAMILTONIAN(1 + FTIMO,2 + FTJMO) + expon*hopping
+                !HAMILTONIAN(2 + FTIMO,1 + FTJMO) = HAMILTONIAN(2 + FTIMO,1 + FTJMO) + expon*hopping
+                HAMILTONIAN(2 + FTIMO,2 + FTJMO) = HAMILTONIAN(2 + FTIMO,2 + FTJMO) + expon*hopping
+                HAMILTONIAN(3 + FTIMO,3 + FTJMO) = HAMILTONIAN(3 + FTIMO,3 + FTJMO) - CONJG(expon*hopping)
+                !HAMILTONIAN(3 + FTIMO,4 + FTJMO) = HAMILTONIAN(3 + FTIMO,4 + FTJMO) + CONJG(expon*hopping)
+                !HAMILTONIAN(4 + FTIMO,3 + FTJMO) = HAMILTONIAN(4 + FTIMO,3 + FTJMO) + CONJG(expon*hopping)
+                HAMILTONIAN(4 + FTIMO,4 + FTJMO) = HAMILTONIAN(4 + FTIMO,4 + FTJMO) - CONJG(expon*hopping)
+
+            end do
+        end do        
+
+    end subroutine RANDOMKHAM
 
     subroutine GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,lorentzbroad)
         implicit none
 
         integer :: NUMT, NUMK, NUME, IE, i, j, k, n, ini, fin, NUMIMP, IMPPTSVAR(4,NUMIMP), &
-        &l, m, a, aprime, dosorno
+        &l, m, a, aprime, dosorno, FTIMO, FTJMO, NUMTKONE
         real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
         complex*16, allocatable, dimension(:) :: energies
         real*8 :: PI, EIGENVALUES(4*NUMT*NUMK), energyintervals, lorentzbroad, &
@@ -549,56 +656,55 @@ program TB
 
             ! This initiates the calculation of the Green's function matrix G(α,α';E) per k-point
             do k = 1, NUMK ! k
+                NUMTKONE = 4*NUMT*(k-1)
 
                 ! Set all G-matrix values equal to zero, so that the following summation can work
-                do i = 1, 4*NUMT
-                    do j = 1, 4*NUMT
-                        GMATRIX(j,i) = (0.0,0.0)
-                    end do
-                end do
+                GMATRIX(:,:) = (0.0,0.0)
 
                 do i = 1, NUMT ! α
+                    FTIMO = 4*(i-1)
                     do j = 1, NUMT ! α'
+                        FTJMO = 4*(j-1)
 
                         do n = 1, 4*NUMT ! This is the sum over all eigenenergies per k
 
-                            ENFRAC = (1.0/(EZ-EIGENVALUES(n + 4*NUMT*(k-1))))
+                            ENFRAC = (1.0/(EZ-EIGENVALUES(n + NUMTKONE)))
                             
-                            GMATRIX(1 + 4*(i-1), 1 + 4*(j-1)) = GMATRIX(1 + 4*(i-1), 1 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 11
-                            GMATRIX(1 + 4*(i-1), 2 + 4*(j-1)) = GMATRIX(1 + 4*(i-1), 2 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 12
-                            GMATRIX(1 + 4*(i-1), 3 + 4*(j-1)) = GMATRIX(1 + 4*(i-1), 3 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 13
-                            GMATRIX(1 + 4*(i-1), 4 + 4*(j-1)) = GMATRIX(1 + 4*(i-1), 4 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 14
+                            GMATRIX(1 + FTIMO, 1 + FTJMO) = GMATRIX(1 + FTIMO, 1 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(1+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(1+FTJMO,n+NUMTKONE)) ! 11
+                            GMATRIX(1 + FTIMO, 2 + FTJMO) = GMATRIX(1 + FTIMO, 2 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(1+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(2+FTJMO,n+NUMTKONE)) ! 12
+                            GMATRIX(1 + FTIMO, 3 + FTJMO) = GMATRIX(1 + FTIMO, 3 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(1+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(3+FTJMO,n+NUMTKONE)) ! 13
+                            GMATRIX(1 + FTIMO, 4 + FTJMO) = GMATRIX(1 + FTIMO, 4 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(1+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(4+FTJMO,n+NUMTKONE)) ! 14
 
-                            GMATRIX(2 + 4*(i-1), 1 + 4*(j-1)) = GMATRIX(2 + 4*(i-1), 1 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 21
-                            GMATRIX(2 + 4*(i-1), 2 + 4*(j-1)) = GMATRIX(2 + 4*(i-1), 2 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 22
-                            GMATRIX(2 + 4*(i-1), 3 + 4*(j-1)) = GMATRIX(2 + 4*(i-1), 3 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 23
-                            GMATRIX(2 + 4*(i-1), 4 + 4*(j-1)) = GMATRIX(2 + 4*(i-1), 4 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 24
+                            GMATRIX(2 + FTIMO, 1 + FTJMO) = GMATRIX(2 + FTIMO, 1 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(2+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(1+FTJMO,n+NUMTKONE)) ! 21
+                            GMATRIX(2 + FTIMO, 2 + FTJMO) = GMATRIX(2 + FTIMO, 2 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(2+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(2+FTJMO,n+NUMTKONE)) ! 22
+                            GMATRIX(2 + FTIMO, 3 + FTJMO) = GMATRIX(2 + FTIMO, 3 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(2+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(3+FTJMO,n+NUMTKONE)) ! 23
+                            GMATRIX(2 + FTIMO, 4 + FTJMO) = GMATRIX(2 + FTIMO, 4 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(2+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(4+FTJMO,n+NUMTKONE)) ! 24
 
-                            GMATRIX(3 + 4*(i-1), 1 + 4*(j-1)) = GMATRIX(3 + 4*(i-1), 1 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 31
-                            GMATRIX(3 + 4*(i-1), 2 + 4*(j-1)) = GMATRIX(3 + 4*(i-1), 2 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 32
-                            GMATRIX(3 + 4*(i-1), 3 + 4*(j-1)) = GMATRIX(3 + 4*(i-1), 3 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 33
-                            GMATRIX(3 + 4*(i-1), 4 + 4*(j-1)) = GMATRIX(3 + 4*(i-1), 4 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + 2*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 34
+                            GMATRIX(3 + FTIMO, 1 + FTJMO) = GMATRIX(3 + FTIMO, 1 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(3+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(1+FTJMO,n+NUMTKONE)) ! 31
+                            GMATRIX(3 + FTIMO, 2 + FTJMO) = GMATRIX(3 + FTIMO, 2 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(3+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(2+FTJMO,n+NUMTKONE)) ! 32
+                            GMATRIX(3 + FTIMO, 3 + FTJMO) = GMATRIX(3 + FTIMO, 3 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(3+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(3+FTJMO,n+NUMTKONE)) ! 33
+                            GMATRIX(3 + FTIMO, 4 + FTJMO) = GMATRIX(3 + FTIMO, 4 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(3+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(4+FTJMO,n+NUMTKONE)) ! 34
 
-                            GMATRIX(4 + 4*(i-1), 1 + 4*(j-1)) = GMATRIX(4 + 4*(i-1), 1 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j,n+4*NUMT*(k-1))) ! 41
-                            GMATRIX(4 + 4*(i-1), 2 + 4*(j-1)) = GMATRIX(4 + 4*(i-1), 2 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + NUMT,n+4*NUMT*(k-1))) ! 42
-                            GMATRIX(4 + 4*(i-1), 3 + 4*(j-1)) = GMATRIX(4 + 4*(i-1), 3 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 2*NUMT,n+4*NUMT*(k-1))) ! 43
-                            GMATRIX(4 + 4*(i-1), 4 + 4*(j-1)) = GMATRIX(4 + 4*(i-1), 4 + 4*(j-1)) +&
-                            &ENFRAC*EIGENVECTORS(i + 3*NUMT,n + 4*NUMT*(k-1))*CONJG(EIGENVECTORS(j + 3*NUMT,n+4*NUMT*(k-1))) ! 44
+                            GMATRIX(4 + FTIMO, 1 + FTJMO) = GMATRIX(4 + FTIMO, 1 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(4+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(1+FTJMO,n+NUMTKONE)) ! 41
+                            GMATRIX(4 + FTIMO, 2 + FTJMO) = GMATRIX(4 + FTIMO, 2 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(4+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(2+FTJMO,n+NUMTKONE)) ! 42
+                            GMATRIX(4 + FTIMO, 3 + FTJMO) = GMATRIX(4 + FTIMO, 3 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(4+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(3+FTJMO,n+NUMTKONE)) ! 43
+                            GMATRIX(4 + FTIMO, 4 + FTJMO) = GMATRIX(4 + FTIMO, 4 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(4+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(4+FTJMO,n+NUMTKONE)) ! 44
 
                         end do
 
@@ -607,9 +713,10 @@ program TB
 
                 if (dosorno == 0) then
                     do i = 1, NUMT ! Calculation of density for each atom
+                        FTIMO = 4*(i-1)
                         do j = 1, 2 ! n = u↑u↑* + u↓u↓*
                             greendensityperatom(1+i,IE) = greendensityperatom(1+i,IE) -&
-                            &(1.0/PI)*AIMAG(GMATRIX(j + 4*(i-1), j + 4*(i-1)))
+                            &(1.0/PI)*AIMAG(GMATRIX(j + FTIMO, j + FTIMO))
                         end do
                     end do
                 endif
@@ -624,23 +731,19 @@ program TB
             ! This constructs a 4*NUMIMP x 4*NUMIMP G(r-r') matrix for each energy EZ
 
             ! Startup
-            do i = 1, 4*NUMIMP
-                do j = 1, 4*NUMIMP
-                    GREENR(j,i) = (0.0,0.0)
-                end do
-            end do
+            GREENR(:,:) = (0.0,0.0)
             
             do i = 1, NUMIMP
+                FTIMO = 4*(i-1)
                 do j = 1, NUMIMP
+                    FTJMO = 4*(j-1)
 
                     a = IMPPTSVAR(4,i)
                     aprime = IMPPTSVAR(4,j)
                     RPOINT = IMPPTSVAR(1,i)*a_1 + IMPPTSVAR(2,i)*a_2 + IMPPTSVAR(3,i)*a_3
                     RPRIMEPOINT = IMPPTSVAR(1,j)*a_1 + IMPPTSVAR(2,j)*a_2 + IMPPTSVAR(3,j)*a_3
 
-                    FOURIERVEC(1) = RPRIMEPOINT(1) - RPOINT(1) + TPTS(1,aprime) - TPTS(1,a)
-                    FOURIERVEC(2) = RPRIMEPOINT(2) - RPOINT(2) + TPTS(2,aprime) - TPTS(2,a)
-                    FOURIERVEC(3) = RPRIMEPOINT(3) - RPOINT(3) + TPTS(3,aprime) - TPTS(3,a) 
+                    FOURIERVEC(1:3) = RPRIMEPOINT(1:3) - RPOINT(1:3) + TPTS(1:3,aprime) - TPTS(1:3,a)
 
                     do k = 1, NUMK
 
@@ -649,8 +752,8 @@ program TB
 
                         do l = 1, 4
                             do m = 1, 4
-                                GREENR(m + 4*(i-1), l + 4*(j-1)) = GREENR(m + 4*(i-1), l + 4*(j-1)) +&
-                                &expon*GK(m + 4*(a-1) , l + 4*(aprime-1) + 4*NUMT*(k-1))                    
+                                GREENR(m + FTIMO, l + FTJMO) = GREENR(m + FTIMO, l + FTJMO) +&
+                                &expon*GK(m + 4*(a-1) , l + 4*(aprime-1) + NUMTKONE)                    
                             end do
                         end do
 
@@ -695,20 +798,19 @@ program TB
 
     end subroutine GREEN
 
-    subroutine BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,zPauli,IdentityPauli,chempot,TPTS,RLATT,E0,R0, &
-        &RMAX,ULCN,nu,nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,&
-        &NUMCHEMTYPES,ALAT,xPauli,yPauli)
+
+    subroutine BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0, &
+        &ULCN,nu,nuzero,BETA,DELTA,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,ALAT)
         implicit none
 
-        integer :: NUMDIR, i, io, j, m, n, NUMT, LWORK, INFO, intpointer, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), &
-        &NUMCHEMTYPES, checker
+        integer :: NUMDIR, i, io, j, m, n, NUMT, LWORK, INFO, intpointer, checker, MAXNEIGHB, NEIGHBNUM(NUMT), &
+        &JTYPE(MAXNEIGHB,NUMT)
         integer, allocatable, dimension(:) :: KINTS
-        real*8 :: DIR(3), KPOINT(3), HORINT, W(4*NUMT), RWORK(3*(4*NUMT) - 2), chempot, TPTS(3,NUMT), &
-        &RLATT(3,IRLATTMAX), R0, E0(NUMT), RMAX, ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(3,NUMT), &
-        &PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), ALAT
+        real*8 :: DIR(3), KPOINT(3), HORINT, W(4*NUMT), RWORK(3*(4*NUMT) - 2), chempot, E0(NUMT), ULCN(NUMT), &
+        &nu(NUMT), nuzero(NUMT), BETA(3,NUMT), ALAT, HOPPVALS(MAXNEIGHB,NUMT), RCONNECT(3,MAXNEIGHB,NUMT)
         real*8, allocatable, dimension(:,:) :: INPOINT, OUTPOINT
-        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), xPauli(2,2),&
-        &yPauli(2,2), DELTA(NUMT)
+        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), xPauli(2,2), &
+        &yPauli(2,2), DELTA(NUMT), HAMILTONIANPREP(4*NUMT,4*NUMT)
 
         ! The following reads the number of basis vectors from a file named basisvectors.dat
         NUMDIR = 0
@@ -763,14 +865,9 @@ program TB
 
             do j = 1, checker
 
-                do m = 1, 4*NUMT
-                    do n = 1, 4*NUMT
-                        HAMILTONIAN(n,m) = (0.0,0.0)
-                    end do
-                end do
+                call HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
 
-                call HAM(xPauli,yPauli,zPauli,IdentityPauli,chempot,TPTS,RLATT,NUMT,E0,R0,RMAX,ULCN,nu,&
-                &nuzero,BETA,DELTA,IRLATT,IRLATTMAX,KPOINT,HAMILTONIAN,PREFACTORS,CHEMTYPE,NUMCHEMTYPES)
+                call RANDOMKHAM(KPOINT,HAMILTONIANPREP,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,NUMT,HAMILTONIAN)
 
                 ! N because we only want eigenvalues and not eigenvectors
                 call zheev ('N', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
@@ -839,7 +936,7 @@ program TB
     subroutine NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
         implicit none
 
-        integer :: i, j, k, NUMT, NUMK, NUME, metalorno
+        integer :: i, j, IE, NUMT, NUMK, NUME, metalorno, FTIMO
         real*8, allocatable, dimension(:,:) :: numdensityperatom, numdensity
         real*8 :: PI, lorentzbroad, EIGENVALUES(4*NUMT*NUMK), energyintervals
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK)
@@ -857,12 +954,13 @@ program TB
         end do
 
         ! Calculation of the DoS PER ATOM
-        do k = 1, NUMT
-            do i = 0, NUME
-                numdensityperatom(1+k,i+1) = 0.0
+        do i = 1, NUMT
+            FTIMO = 4*(i-1)
+            do IE = 0, NUME
+                numdensityperatom(1+i,IE+1) = 0.0
                 do j = 1, 4*NUMT*NUMK
-                    numdensityperatom(1+k,i+1) = numdensityperatom(1+k,i+1) + (lorentzbroad/pi)*&
-                    &((abs(EIGENVECTORS(k,j))**2 + abs(EIGENVECTORS(k+NUMT,j))**2)/((numdensityperatom(1,i+1) -&
+                    numdensityperatom(1+i,IE+1) = numdensityperatom(1+i,IE+1) + (lorentzbroad/pi)*&
+                    &((abs(EIGENVECTORS(1+FTIMO,j))**2 + abs(EIGENVECTORS(2+FTIMO,j))**2)/((numdensityperatom(1,IE+1) -&
                     &EIGENVALUES(j))**2 + lorentzbroad**2)) ! Sum over all eigenvalues with |u| as weights
                 end do
             end do
