@@ -232,14 +232,12 @@ program TB
             nudown(i) = 0.0
             DOSATMU(i) = 0.0
 
-            FTIMO = 4*(i-1)
-
             do j = 1, 4*NUMT*NUMK
-                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(1+FTIMO,j))**2
-                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(4+FTIMO,j))**2
+                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
+                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i+3*NUMT,j))**2
 
-                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(1+FTIMO,j))**2 +&
-                &abs(EIGENVECTORS(2+FTIMO,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
+                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
+                &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
             end do
 
             newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
@@ -302,15 +300,15 @@ program TB
             FTIMO = 4*(i-1)
 
             do j = 1, 4*NUMT*NUMK
-                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(1+FTIMO,j))**2
+                nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
 
-                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(4+FTIMO,j))**2
+                nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i+3*NUMT,j))**2
 
                 newDELTA(i) = newDELTA(i) -&
-                & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(1+FTIMO,j)*CONJG(EIGENVECTORS(4+FTIMO,j))
+                & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(i+3*NUMT,j))
 
-                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(1+FTIMO,j))**2 +&
-                &abs(EIGENVECTORS(2+FTIMO,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
+                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
+                &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
             end do
 
             newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
@@ -357,15 +355,15 @@ program TB
         FTIMO = 4*(i-1)
 
         do j = 1, 4*NUMT*NUMK
-            nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(1+FTIMO,j))**2
+            nuup(i) = nuup(i) + FERMI(EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i,j))**2
 
-            nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(4+FTIMO,j))**2
+            nudown(i) = nudown(i) + FERMI(-EIGENVALUES(j),T,KB)*abs(EIGENVECTORS(i+3*NUMT,j))**2
 
             newDELTA(i) = newDELTA(i) -&
-            & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(1+FTIMO,j)*CONJG(EIGENVECTORS(4+FTIMO,j))
+            & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(i+3*NUMT,j))
 
-            DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(1+FTIMO,j))**2 +&
-            &abs(EIGENVECTORS(2+FTIMO,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
+            DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
+            &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
         end do
 
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
@@ -501,7 +499,7 @@ program TB
 
     subroutine HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
         implicit none
-        integer :: NUMT, i, FTIMO
+        integer :: NUMT, i
         real*8 :: chempot, E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(3,NUMT)
         complex*16 :: xPauli(2,2), yPauli(2,2), zPauli(2,2), IdentityPauli(2,2), helperham(2,2), DELTA(NUMT),&
         & HAMILTONIANPREP(4*NUMT,4*NUMT)
@@ -510,30 +508,28 @@ program TB
 
         do i = 1, NUMT
 
-            FTIMO = 4*(i-1)
-
             helperham = (E0(i) - chempot + ULCN(i)*(nu(i) - nuzero(i)))*IdentityPauli -&
             &BETA(1,i)*xPauli - BETA(2,i)*yPauli - BETA(3,i)*zPauli
 
-            HAMILTONIANPREP(1 + FTIMO, 1 + FTIMO) = helperham(1,1)
-            HAMILTONIANPREP(1 + FTIMO, 2 + FTIMO) = helperham(1,2)
-            !HAMILTONIANPREP(1 + FTIMO, 3 + FTIMO) = (0.0,0.0)
-            HAMILTONIANPREP(1 + FTIMO, 4 + FTIMO) = DELTA(i)
+            HAMILTONIANPREP(i, i) = helperham(1,1)
+            HAMILTONIANPREP(i, i + NUMT) = helperham(1,2)
+            !HAMILTONIANPREP(i, i + 2*NUMT) = (0.0,0.0)
+            HAMILTONIANPREP(i, i + 3*NUMT) = DELTA(i)
 
-            HAMILTONIANPREP(2 + FTIMO, 1 + FTIMO) = helperham(2,1)
-            HAMILTONIANPREP(2 + FTIMO, 2 + FTIMO) = helperham(2,2)
-            HAMILTONIANPREP(2 + FTIMO, 3 + FTIMO) = DELTA(i)
-            !HAMILTONIANPREP(2 + FTIMO, 4 + FTIMO) = (0.0,0.0)
+            HAMILTONIANPREP(i + NUMT, i) = helperham(2,1)
+            HAMILTONIANPREP(i + NUMT, i + NUMT) = helperham(2,2)
+            HAMILTONIANPREP(i + NUMT, i + 2*NUMT) = DELTA(i)
+            !HAMILTONIANPREP(i + NUMT, i + 3*NUMT) = (0.0,0.0)
 
-            !HAMILTONIANPREP(3 + FTIMO, 1 + FTIMO) = (0.0,0.0)
-            HAMILTONIANPREP(3 + FTIMO, 2 + FTIMO) = CONJG(DELTA(i))
-            HAMILTONIANPREP(3 + FTIMO, 3 + FTIMO) = -CONJG(helperham(1,1))
-            HAMILTONIANPREP(3 + FTIMO, 4 + FTIMO) = CONJG(helperham(1,2))
+            !HAMILTONIANPREP(i + 2*NUMT, i) = (0.0,0.0)
+            HAMILTONIANPREP(i + 2*NUMT, i + NUMT) = CONJG(DELTA(i))
+            HAMILTONIANPREP(i + 2*NUMT, i + 2*NUMT) = -CONJG(helperham(1,1))
+            HAMILTONIANPREP(i + 2*NUMT, i + 3*NUMT) = CONJG(helperham(1,2))
 
-            HAMILTONIANPREP(4 + FTIMO, 1 + FTIMO) = CONJG(DELTA(i))
-            !HAMILTONIANPREP(4 + FTIMO, 2 + FTIMO) = (0.0,0.0)
-            HAMILTONIANPREP(4 + FTIMO, 3 + FTIMO) = CONJG(helperham(2,1))
-            HAMILTONIANPREP(4 + FTIMO, 4 + FTIMO) = -CONJG(helperham(2,2))
+            HAMILTONIANPREP(i + 3*NUMT, i) = CONJG(DELTA(i))
+            !HAMILTONIANPREP(i + 3*NUMT, i + NUMT) = (0.0,0.0)
+            HAMILTONIANPREP(i + 3*NUMT, i + 2*NUMT) = CONJG(helperham(2,1))
+            HAMILTONIANPREP(i + 3*NUMT, i + 3*NUMT) = -CONJG(helperham(2,2))
 
         end do
 
@@ -542,29 +538,27 @@ program TB
     subroutine FOURIERHAM(kcounter,NUMK,HAMILTONIANPREP,EXPONS,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,NUMT,HAMILTONIAN)
         implicit none
         integer, intent(in) :: kcounter
-        integer :: NUMT, NUMK, i, jneighb, NEIGHBNUM(NUMT), MAXNEIGHB, JATOM, JTYPE(MAXNEIGHB,NUMT), FTIMO, FTJMO
+        integer :: NUMT, NUMK, i, jneighb, NEIGHBNUM(NUMT), MAXNEIGHB, JATOM, JTYPE(MAXNEIGHB,NUMT)
         real*8 :: HOPPVALS(MAXNEIGHB,NUMT)
         complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), HAMILTONIANPREP(4*NUMT,4*NUMT), EXPONS(NUMK,MAXNEIGHB,NUMT), term
 
         HAMILTONIAN(:,:) = HAMILTONIANPREP(:,:)
 
         do i = 1, NUMT
-            FTIMO = 4*(i-1)
             do jneighb = 1, NEIGHBNUM(i)
 
                 JATOM = JTYPE(jneighb,i)
-                FTJMO = 4*(JATOM-1)
 
                 term = EXPONS(kcounter,jneighb,i)*HOPPVALS(jneighb,i)
 
-                HAMILTONIAN(1 + FTIMO,1 + FTJMO) = HAMILTONIAN(1 + FTIMO,1 + FTJMO) + term
-                !HAMILTONIAN(1 + FTIMO,2 + FTJMO) = HAMILTONIAN(1 + FTIMO,2 + FTJMO) + term
-                !HAMILTONIAN(2 + FTIMO,1 + FTJMO) = HAMILTONIAN(2 + FTIMO,1 + FTJMO) + term
-                HAMILTONIAN(2 + FTIMO,2 + FTJMO) = HAMILTONIAN(2 + FTIMO,2 + FTJMO) + term
-                HAMILTONIAN(3 + FTIMO,3 + FTJMO) = HAMILTONIAN(3 + FTIMO,3 + FTJMO) - term
-                !HAMILTONIAN(3 + FTIMO,4 + FTJMO) = HAMILTONIAN(3 + FTIMO,4 + FTJMO) + term
-                !HAMILTONIAN(4 + FTIMO,3 + FTJMO) = HAMILTONIAN(4 + FTIMO,3 + FTJMO) + term
-                HAMILTONIAN(4 + FTIMO,4 + FTJMO) = HAMILTONIAN(4 + FTIMO,4 + FTJMO) - term
+                HAMILTONIAN(i,JATOM) = HAMILTONIAN(i,JATOM) + term
+                !HAMILTONIAN(i,JATOM + NUMT) = HAMILTONIAN(i,JATOM + NUMT) + term
+                !HAMILTONIAN(i + NUMT,JATOM) = HAMILTONIAN(i + NUMT,JATOM) + term
+                HAMILTONIAN(i + NUMT,JATOM + NUMT) = HAMILTONIAN(i + NUMT,JATOM + NUMT) + term
+                HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) = HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) - term
+                !HAMILTONIAN(i + 2*NUMT,JATOM + 3*NUMT) = HAMILTONIAN(i + 2*NUMT,JATOM + 3*NUMT) + term
+                !HAMILTONIAN(i + 3*NUMT,JATOM + 2*NUMT) = HAMILTONIAN(i + 3*NUMT,JATOM + 2*NUMT) + term
+                HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) = HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) - term
 
             end do
         end do
@@ -574,32 +568,30 @@ program TB
     subroutine RANDOMKHAM(KPOINT,HAMILTONIANPREP,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,NUMT,HAMILTONIAN)
         implicit none
         real*8, intent(in) :: KPOINT(3)
-        integer :: NUMT, i, jneighb, MAXNEIGHB, NEIGHBNUM(NUMT), JATOM, JTYPE(MAXNEIGHB,NUMT), FTIMO, FTJMO
+        integer :: NUMT, i, jneighb, MAXNEIGHB, NEIGHBNUM(NUMT), JATOM, JTYPE(MAXNEIGHB,NUMT)
         real*8 :: hopping, HOPPVALS(MAXNEIGHB,NUMT), RPOINT(3), lambda, RCONNECT(3,MAXNEIGHB,NUMT)
         complex*16 :: expon, HAMILTONIAN(4*NUMT,4*NUMT), HAMILTONIANPREP(4*NUMT,4*NUMT)
 
         HAMILTONIAN(:,:) = HAMILTONIANPREP(:,:)
 
         do i = 1, NUMT
-            FTIMO = 4*(i-1)
             do jneighb = 1, NEIGHBNUM(i)
 
                 RPOINT = RCONNECT(1:3,jneighb,i)
                 JATOM = JTYPE(jneighb,i)
-                FTJMO = 4*(JATOM-1)
 
                 hopping = HOPPVALS(jneighb,i)
 
                 expon = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT))
 
-                HAMILTONIAN(1 + FTIMO,1 + FTJMO) = HAMILTONIAN(1 + FTIMO,1 + FTJMO) + expon*hopping
-                !HAMILTONIAN(1 + FTIMO,2 + FTJMO) = HAMILTONIAN(1 + FTIMO,2 + FTJMO) + expon*hopping
-                !HAMILTONIAN(2 + FTIMO,1 + FTJMO) = HAMILTONIAN(2 + FTIMO,1 + FTJMO) + expon*hopping
-                HAMILTONIAN(2 + FTIMO,2 + FTJMO) = HAMILTONIAN(2 + FTIMO,2 + FTJMO) + expon*hopping
-                HAMILTONIAN(3 + FTIMO,3 + FTJMO) = HAMILTONIAN(3 + FTIMO,3 + FTJMO) - CONJG(expon*hopping)
-                !HAMILTONIAN(3 + FTIMO,4 + FTJMO) = HAMILTONIAN(3 + FTIMO,4 + FTJMO) + CONJG(expon*hopping)
-                !HAMILTONIAN(4 + FTIMO,3 + FTJMO) = HAMILTONIAN(4 + FTIMO,3 + FTJMO) + CONJG(expon*hopping)
-                HAMILTONIAN(4 + FTIMO,4 + FTJMO) = HAMILTONIAN(4 + FTIMO,4 + FTJMO) - CONJG(expon*hopping)
+                HAMILTONIAN(i,JATOM) = HAMILTONIAN(i,JATOM) + expon*hopping
+                !HAMILTONIAN(i,JATOM + NUMT) = HAMILTONIAN(i,JATOM + NUMT) + expon*hopping
+                !HAMILTONIAN(i + NUMT,JATOM) = HAMILTONIAN(i + NUMT,JATOM) + expon*hopping
+                HAMILTONIAN(i + NUMT,JATOM + NUMT) = HAMILTONIAN(i + NUMT,JATOM + NUMT) + expon*hopping
+                HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) = HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) - CONJG(expon*hopping)
+                !HAMILTONIAN(i + 2*NUMT,JATOM + 3*NUMT) = HAMILTONIAN(i + 2*NUMT,JATOM + 3*NUMT) + CONJG(expon*hopping)
+                !HAMILTONIAN(i + 3*NUMT,JATOM + 2*NUMT) = HAMILTONIAN(i + 3*NUMT,JATOM + 2*NUMT) + CONJG(expon*hopping)
+                HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) = HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) - CONJG(expon*hopping)
 
             end do
         end do        
@@ -671,40 +663,40 @@ program TB
                             ENFRAC = (1.0/(EZ-EIGENVALUES(n + NUMTKONE)))
                             
                             GMATRIX(1 + FTIMO, 1 + FTJMO) = GMATRIX(1 + FTIMO, 1 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(1+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(1+FTJMO,n+NUMTKONE)) ! 11
+                            &ENFRAC*EIGENVECTORS(i,n + NUMTKONE)*CONJG(EIGENVECTORS(j,n+NUMTKONE)) ! 11
                             GMATRIX(1 + FTIMO, 2 + FTJMO) = GMATRIX(1 + FTIMO, 2 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(1+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(2+FTJMO,n+NUMTKONE)) ! 12
+                            &ENFRAC*EIGENVECTORS(i,n + NUMTKONE)*CONJG(EIGENVECTORS(j+NUMT,n+NUMTKONE)) ! 12
                             GMATRIX(1 + FTIMO, 3 + FTJMO) = GMATRIX(1 + FTIMO, 3 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(1+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(3+FTJMO,n+NUMTKONE)) ! 13
+                            &ENFRAC*EIGENVECTORS(i,n + NUMTKONE)*CONJG(EIGENVECTORS(j+2*NUMT,n+NUMTKONE)) ! 13
                             GMATRIX(1 + FTIMO, 4 + FTJMO) = GMATRIX(1 + FTIMO, 4 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(1+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(4+FTJMO,n+NUMTKONE)) ! 14
+                            &ENFRAC*EIGENVECTORS(i,n + NUMTKONE)*CONJG(EIGENVECTORS(j+3*NUMT,n+NUMTKONE)) ! 14
 
                             GMATRIX(2 + FTIMO, 1 + FTJMO) = GMATRIX(2 + FTIMO, 1 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(2+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(1+FTJMO,n+NUMTKONE)) ! 21
+                            &ENFRAC*EIGENVECTORS(i+NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j,n+NUMTKONE)) ! 21
                             GMATRIX(2 + FTIMO, 2 + FTJMO) = GMATRIX(2 + FTIMO, 2 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(2+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(2+FTJMO,n+NUMTKONE)) ! 22
+                            &ENFRAC*EIGENVECTORS(i+NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+NUMT,n+NUMTKONE)) ! 22
                             GMATRIX(2 + FTIMO, 3 + FTJMO) = GMATRIX(2 + FTIMO, 3 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(2+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(3+FTJMO,n+NUMTKONE)) ! 23
+                            &ENFRAC*EIGENVECTORS(i+NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+2*NUMT,n+NUMTKONE)) ! 23
                             GMATRIX(2 + FTIMO, 4 + FTJMO) = GMATRIX(2 + FTIMO, 4 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(2+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(4+FTJMO,n+NUMTKONE)) ! 24
+                            &ENFRAC*EIGENVECTORS(i+NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+3*NUMT,n+NUMTKONE)) ! 24
 
                             GMATRIX(3 + FTIMO, 1 + FTJMO) = GMATRIX(3 + FTIMO, 1 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(3+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(1+FTJMO,n+NUMTKONE)) ! 31
+                            &ENFRAC*EIGENVECTORS(i+2*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j,n+NUMTKONE)) ! 31
                             GMATRIX(3 + FTIMO, 2 + FTJMO) = GMATRIX(3 + FTIMO, 2 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(3+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(2+FTJMO,n+NUMTKONE)) ! 32
+                            &ENFRAC*EIGENVECTORS(i+2*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+NUMT,n+NUMTKONE)) ! 32
                             GMATRIX(3 + FTIMO, 3 + FTJMO) = GMATRIX(3 + FTIMO, 3 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(3+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(3+FTJMO,n+NUMTKONE)) ! 33
+                            &ENFRAC*EIGENVECTORS(i+2*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+2*NUMT,n+NUMTKONE)) ! 33
                             GMATRIX(3 + FTIMO, 4 + FTJMO) = GMATRIX(3 + FTIMO, 4 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(3+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(4+FTJMO,n+NUMTKONE)) ! 34
+                            &ENFRAC*EIGENVECTORS(i+2*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+3*NUMT,n+NUMTKONE)) ! 34
 
                             GMATRIX(4 + FTIMO, 1 + FTJMO) = GMATRIX(4 + FTIMO, 1 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(4+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(1+FTJMO,n+NUMTKONE)) ! 41
+                            &ENFRAC*EIGENVECTORS(i+3*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j,n+NUMTKONE)) ! 41
                             GMATRIX(4 + FTIMO, 2 + FTJMO) = GMATRIX(4 + FTIMO, 2 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(4+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(2+FTJMO,n+NUMTKONE)) ! 42
+                            &ENFRAC*EIGENVECTORS(i+3*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+NUMT,n+NUMTKONE)) ! 42
                             GMATRIX(4 + FTIMO, 3 + FTJMO) = GMATRIX(4 + FTIMO, 3 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(4+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(3+FTJMO,n+NUMTKONE)) ! 43
+                            &ENFRAC*EIGENVECTORS(i+3*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+2*NUMT,n+NUMTKONE)) ! 43
                             GMATRIX(4 + FTIMO, 4 + FTJMO) = GMATRIX(4 + FTIMO, 4 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(4+FTIMO,n + NUMTKONE)*CONJG(EIGENVECTORS(4+FTJMO,n+NUMTKONE)) ! 44
+                            &ENFRAC*EIGENVECTORS(i+3*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+3*NUMT,n+NUMTKONE)) ! 44
 
                         end do
 
@@ -797,7 +789,6 @@ program TB
         endif
 
     end subroutine GREEN
-
 
     subroutine BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0, &
         &ULCN,nu,nuzero,BETA,DELTA,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,ALAT)
@@ -960,7 +951,7 @@ program TB
                 numdensityperatom(1+i,IE+1) = 0.0
                 do j = 1, 4*NUMT*NUMK
                     numdensityperatom(1+i,IE+1) = numdensityperatom(1+i,IE+1) + (lorentzbroad/pi)*&
-                    &((abs(EIGENVECTORS(1+FTIMO,j))**2 + abs(EIGENVECTORS(2+FTIMO,j))**2)/((numdensityperatom(1,IE+1) -&
+                    &((abs(EIGENVECTORS(i,j))**2 + abs(EIGENVECTORS(i+NUMT,j))**2)/((numdensityperatom(1,IE+1) -&
                     &EIGENVALUES(j))**2 + lorentzbroad**2)) ! Sum over all eigenvalues with |u| as weights
                 end do
             end do
