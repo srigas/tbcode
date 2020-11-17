@@ -1,7 +1,7 @@
 program BDG_IMP
     implicit none
 
-    integer :: i, j, NUME, NUMIMP, IE, INFO
+    integer :: i, j, NUME, NUMIMP, IE, INFO, FTIMO
     integer, allocatable, dimension(:) :: IPIV
     real*8 :: PI, KB, tempval1, tempval2
     real*8, allocatable, dimension(:) :: E0, E0IMP
@@ -44,28 +44,30 @@ program BDG_IMP
     ! Constructs the ΔH matrix
     do i = 1, NUMIMP
 
+        FTIMO = 4*(i-1)
+
         posham = (E0IMP(i) - E0(i))*IdentityPauli - (BETAIMP(1,i)-BETA(1,i))*xPauli - (BETAIMP(2,i)-BETA(2,i))*yPauli -&
         & (BETAIMP(3,i)-BETA(3,i))*zPauli
 
-        HAMIMP(1 + (i-1)*4,1 + (i-1)*4) = posham(1,1)
-        HAMIMP(1 + (i-1)*4,2 + (i-1)*4) = posham(1,2)
-        !HAMIMP(1 + (i-1)*4,3 + (i-1)*4) = 0.0
-        HAMIMP(1 + (i-1)*4,4 + (i-1)*4) = DELTAIMP(i) - DELTA(i)
+        HAMIMP(1 + FTIMO,1 + FTIMO) = posham(1,1)
+        HAMIMP(1 + FTIMO,2 + FTIMO) = posham(1,2)
+        !HAMIMP(1 + FTIMO,3 + FTIMO) = 0.0
+        HAMIMP(1 + FTIMO,4 + FTIMO) = DELTAIMP(i) - DELTA(i)
 
-        HAMIMP(2 + (i-1)*4,1 + (i-1)*4) = posham(2,1)
-        HAMIMP(2 + (i-1)*4,2 + (i-1)*4) = posham(2,2)
-        HAMIMP(2 + (i-1)*4,3 + (i-1)*4) = HAMIMP(1 + (i-1)*4,4 + (i-1)*4)
-        !HAMIMP(2 + (i-1)*4,4 + (i-1)*4) = 0.0
+        HAMIMP(2 + FTIMO,1 + FTIMO) = posham(2,1)
+        HAMIMP(2 + FTIMO,2 + FTIMO) = posham(2,2)
+        HAMIMP(2 + FTIMO,3 + FTIMO) = HAMIMP(1 + FTIMO,4 + FTIMO)
+        !HAMIMP(2 + FTIMO,4 + FTIMO) = 0.0
 
-        !HAMIMP(3 + (i-1)*4,1 + (i-1)*4) = 0.0
-        HAMIMP(3 + (i-1)*4,2 + (i-1)*4) = CONJG(HAMIMP(1 + (i-1)*4,4 + (i-1)*4))
-        HAMIMP(3 + (i-1)*4,3 + (i-1)*4) = -HAMIMP(1 + (i-1)*4,1 + (i-1)*4)
-        HAMIMP(3 + (i-1)*4,4 + (i-1)*4) = CONJG(HAMIMP(1 + (i-1)*4,2 + (i-1)*4))
+        !HAMIMP(3 + FTIMO,1 + FTIMO) = 0.0
+        HAMIMP(3 + FTIMO,2 + FTIMO) = CONJG(HAMIMP(1 + FTIMO,4 + FTIMO))
+        HAMIMP(3 + FTIMO,3 + FTIMO) = -HAMIMP(1 + FTIMO,1 + FTIMO)
+        HAMIMP(3 + FTIMO,4 + FTIMO) = CONJG(HAMIMP(1 + FTIMO,2 + FTIMO))
 
-        HAMIMP(4 + (i-1)*4,1 + (i-1)*4) = CONJG(HAMIMP(2 + (i-1)*4,3 + (i-1)*4))
-        !HAMIMP(4 + (i-1)*4,2 + (i-1)*4) = 0.0
-        HAMIMP(4 + (i-1)*4,3 + (i-1)*4) = CONJG(HAMIMP(2 + (i-1)*4,1 + (i-1)*4))
-        HAMIMP(4 + (i-1)*4,4 + (i-1)*4) = -CONJG(HAMIMP(2 + (i-1)*4,2 + (i-1)*4))
+        HAMIMP(4 + FTIMO,1 + FTIMO) = CONJG(HAMIMP(2 + FTIMO,3 + FTIMO))
+        !HAMIMP(4 + FTIMO,2 + FTIMO) = 0.0
+        HAMIMP(4 + FTIMO,3 + FTIMO) = CONJG(HAMIMP(2 + FTIMO,1 + FTIMO))
+        HAMIMP(4 + FTIMO,4 + FTIMO) = -CONJG(HAMIMP(2 + FTIMO,2 + FTIMO))
 
     end do
 
