@@ -33,13 +33,13 @@ program BDG_IMP
     open(1, file = 'impatoms.dat', action = 'read')
     do i = 1, NUMIMP
         read (1,*) E0(i), BETA(1,i), BETA(2,i), BETA(3,i), tempval1, tempval2
-        DELTA(i) = cmplx(tempval1, tempval2)
+        DELTA(i) = dcmplx(tempval1, tempval2)
         read (1,*) E0IMP(i), BETAIMP(1,i), BETAIMP(2,i), BETAIMP(3,i), tempval1, tempval2
-        DELTAIMP(i) = cmplx(tempval1, tempval2)
+        DELTAIMP(i) = dcmplx(tempval1, tempval2)
     end do
     close(1)
 
-    HAMIMP(:,:) = (0.0,0.0)
+    HAMIMP(:,:) = (0.d0,0.d0)
 
     ! Constructs the ΔH matrix
     do i = 1, NUMIMP
@@ -87,14 +87,14 @@ program BDG_IMP
             do i = 1, 4*NUMIMP
                 do j = 1, 4*NUMIMP
                     read(1,*) tempval1, tempval2
-                    GREEN(i,j) = cmplx(tempval1, tempval2)
+                    GREEN(i,j) = dcmplx(tempval1, tempval2)
                 end do  
             end do
         else
             do i = 1, 4*NUMIMP
                 do j = 1, 4*NUMIMP
                     read(1,*) tempval1, tempval2
-                    GREEN(i,j) = cmplx(tempval1, tempval2)
+                    GREEN(i,j) = dcmplx(tempval1, tempval2)
                 end do  
             end do
         endif

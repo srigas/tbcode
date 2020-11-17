@@ -626,7 +626,7 @@ program TB
 
         ! These are the "complex" energies E
         do i = 1, NUME+1
-            energies(i) = cmplx(MINVAL(EIGENVALUES) + energyintervals*(i-1), lorentzbroad)
+            energies(i) = dcmplx(MINVAL(EIGENVALUES) + energyintervals*(i-1), lorentzbroad)
         end do
 
         ! This part writes all the Fouriered Green function elements per energy at this text file
