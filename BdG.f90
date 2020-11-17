@@ -6,7 +6,8 @@ program TB
     integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE, NEIGHBNUM
     integer, allocatable, dimension(:,:) :: IMPPTSVAR, JTYPE
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, RPOINT(3), TTPRIME(3),&
-	&chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad, diffchem, newchempot, lambda, TOL
+    &chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad, diffchem, newchempot, lambda, TOL,&
+    &TOTDOSATMU
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, magnet, VSUPCOND, nuup, nudown, diffN, diffD, DOSATMU
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, BETA, LHOPS, PREFACTORS, NNDIS, HOPPVALS
@@ -226,7 +227,8 @@ program TB
             EIGENVECTORS(:,ini:fin) = HAMILTONIAN
         end do
 
-        newchempot = chempot
+        newchempot = 0.0
+        TOTDOSATMU = 0.0
         do i = 1, NUMT
             nuup(i) = 0.0
             nudown(i) = 0.0
@@ -243,16 +245,24 @@ program TB
             newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
             diffN(i) = abs(newnu(i) - nu(i))
 
-            newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
+            newchempot = newchempot - (newnu(i)-nuzero(i))
+            TOTDOSATMU = TOTDOSATMU + DOSATMU(i)
         end do
+        newchempot = newchempot/TOTDOSATMU + chempot
         diffchem = abs(chempot-newchempot)
 
         nu = (1.0 - mixfactorN)*nu + mixfactorN*newnu
         chempot = newchempot ! new chempot for next run
+        print *, 'Finished run no.', reps+1
         reps = reps + 1
 
     end do
     print *, 'METAL self-consistency finished.'
+
+    do i = 1, NUMT
+        print *, 'n = ', newnu(i), 'for atom No. ', i
+    end do
+    print *, 'chempot = ', chempot
 
     ! We now perform a DoS calculation for the metal, in order to then be able to compare it to the SC.
     call NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
@@ -289,7 +299,8 @@ program TB
 
 		! At that point all the eigenvalues are in the form (.,.,.,.,...) and all the eigenvectors are 4*NUMT*NUMK columns of 4*NUMT rows
 
-        newchempot = chempot
+        newchempot = 0.0
+        TOTDOSATMU = 0.0
 		! Calculates the charges n-up, n-down and n as well as Delta and chempot
         do i = 1, NUMT
             nuup(i) = 0.0
@@ -317,13 +328,16 @@ program TB
             newDELTA(i) = newDELTA(i)/NUMK ! Normalization
             diffD(i) = abs(abs(newDELTA(i)) - abs(DELTA(i)))
 
-            newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
+            newchempot = newchempot - (newnu(i)-nuzero(i))
+            TOTDOSATMU = TOTDOSATMU + DOSATMU(i)
         end do
+        newchempot = newchempot/TOTDOSATMU + chempot
         diffchem = abs(chempot-newchempot)
 
         DELTA = (1.0 - mixfactorD)*DELTA + mixfactorD*newDELTA
         nu = (1.0 - mixfactorN)*nu + mixfactorN*newnu
         chempot = newchempot ! new chempot for next run
+        print *, 'Finished run no.', reps+1
         reps = reps + 1
     end do
     print *, 'SC self-consistency finished.'
@@ -344,7 +358,8 @@ program TB
     end do
 
 	! At that point, we calculate the density, magnetization and D for the final Hamiltonian using the converged values.
-    newchempot = chempot
+    newchempot = 0.0
+    TOTDOSATMU = 0.0
     do i = 1, NUMT
         nuup(i) = 0.0
         nudown(i) = 0.0
@@ -369,21 +384,22 @@ program TB
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
         newDELTA(i) = newDELTA(i)/NUMK ! Final D per atom
         magnet(i) = (nuup(i) - nudown(i))/NUMK ! Final magnetization
-        newchempot = newchempot - (newnu(i)-nuzero(i))*DOSATMU(i)
+        newchempot = newchempot - (newnu(i)-nuzero(i))
+        TOTDOSATMU = TOTDOSATMU + DOSATMU(i)
 
         print *, 'n = ', newnu(i), 'for atom No. ', i
         print *, 'D = ', newDELTA(i), 'for atom No. ', i
         print *, 'M = ', magnet(i), 'for atom No. ', i
     end do
-    
+    newchempot = newchempot/TOTDOSATMU + chempot
     print *, 'chempot = ', newchempot
 
     ! Routine for making band diagrams
     print *, 'To export band diagram data press 0, otherwise press any other number.'
     read *, bandpointer
     if (bandpointer == 0) then
-        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0, &
-        &ULCN,nu,nuzero,BETA,DELTA,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,ALAT)
+        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,xPauli,yPauli,zPauli,IdentityPauli,newchempot,E0, &
+        &ULCN,newnu,nuzero,BETA,newDELTA,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,ALAT)
     endif
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
