@@ -1,0 +1,16 @@
+1.0 ! Lattice constant
+1.0,0.0,0.0 ! a_1
+0.0,1.0,0.0 ! a_2
+0.0,0.0,100.0 ! a_3
+20,20,1 ! N_x, N_y, N_z
+1.1 ! R_max
+1 ! R_0
+1 ! NCELLS
+0.01 ! Temperature
+0.0 ! Initial Chempot value
+0.3 ! Initial guess for the charges
+(0.001,0.0) ! Initial value for Delta
+0.1 ! Mixing factor for charges
+0.1 ! Mixing factor for Delta
+300 ! Points for DoS
+0.1 ! Lorentzian broadening at DoS

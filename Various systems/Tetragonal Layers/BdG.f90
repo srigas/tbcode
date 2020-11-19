@@ -99,11 +99,14 @@ program TB
     end do
     close(1)
 
+    ! DELTA(1) = (0.0,0.0)
+    ! do i = 2, NUMT-1
     do i = 1, NUMT
         nu(i) = inicharge
         DELTA(i) = inidelta
         METALDELTA(i) = (0.0,0.0)
     end do
+    ! DELTA(NUMT) = (0.0,0.0)
 
     NUMCHEMTYPES = MAXVAL(CHEMTYPE)
     allocate(LHOPS(NUMCHEMTYPES,NUMCHEMTYPES))
@@ -255,7 +258,7 @@ program TB
         newchempot = chempot + 0.5*atan(diffchem) ! New chempot for next run
         
         diffchem = abs(newchempot-chempot)
-        chempot = newchempot ! new chempot for next run
+        chempot = newchempot
         nu = (1.0 - mixfactorN)*nu + mixfactorN*newnu
 
         print *, 'Finished run no.', reps+1
@@ -264,11 +267,14 @@ program TB
     end do
     print *, 'METAL self-consistency finished.'
 
+    open (1, file = 'metalresults.txt', action = 'write')
+    write (1, *) 'Chemical potential = ', chempot
     do i = 1, NUMT
-        print *, 'n = ', newnu(i), 'for atom No. ', i
-        print *, 'm = ', magnet(i), 'for atom No. 1', i
+        write (1,'(2F15.7, I7)') nu(i), magnet(i), i
     end do
-    print *, 'chempot = ', chempot
+    write (1,'(A)') '------------------------------------------------------------'
+    write (1,'(A)') 'Format: Density, Magnetization, Layer index'
+    close(1)
 
     ! We now perform a DoS calculation for the metal, in order to then be able to compare it to the SC.
     call NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
@@ -394,13 +400,17 @@ program TB
         magnet(i) = (nuup(i) - nudown(i))/NUMK ! Final magnetization
         newchempot = newchempot - (newnu(i)-nuzero(i))
         TOTDOSATMU = TOTDOSATMU + DOSATMU(i)
-
-        print *, 'n = ', newnu(i), 'for atom No. ', i
-        print *, 'D = ', newDELTA(i), 'for atom No. ', i
-        print *, 'M = ', magnet(i), 'for atom No. ', i
     end do
     newchempot = 0.5*atan(newchempot/TOTDOSATMU) + chempot
-    print *, 'chempot = ', newchempot
+
+    open (1, file = 'SCresults.txt', action = 'write')
+    write (1, *) 'Chemical potential = ', newchempot
+    do i = 1, NUMT
+        write (1,'(4F15.7, I7)') newnu(i), magnet(i), REAL(newDELTA(i)), AIMAG(newDELTA(i)), i
+    end do
+    write (1,'(A)') '------------------------------------------------------------'
+    write (1,'(A)') 'Format: Density, Magnetization, Real part of D, Imag part of D, Layer index'
+    close(1)
 
     ! Routine for making band diagrams
     print *, 'To export band diagram data press 0, otherwise press any other number.'
@@ -933,7 +943,7 @@ program TB
 
         open(1, file = 'intnumdensity.txt', action = 'write')
         do j = 1, uniquecounter
-            write (1,'(2F17.8)') intnumdensity(1,j), intnumdensity(2,j)
+            write (1,'(2F17.8)',advance='no') intnumdensity(1,j), intnumdensity(2,j)
         end do
         close(1)
 
