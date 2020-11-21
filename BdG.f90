@@ -1,7 +1,7 @@
 program TB
     implicit none
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, bandpointer, intnumdenpointer, NUME, metalorno, JATOM, rcheck,&
+    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, intnumdenpointer, NUME, metalorno, JATOM, rcheck,&
     & MAXNEIGHB, FTIMO
     integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE, NEIGHBNUM
     integer, allocatable, dimension(:,:) :: IMPPTSVAR, JTYPE
@@ -402,13 +402,12 @@ program TB
     newchempot = 0.5*atan(newchempot/TOTDOSATMU) + chempot
     print *, 'chempot = ', newchempot
 
-    ! Routine for making band diagrams
-    print *, 'To export band diagram data press 0, otherwise press any other number.'
-    read *, bandpointer
-    if (bandpointer == 0) then
-        call BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,xPauli,yPauli,zPauli,IdentityPauli,newchempot,E0, &
-        &ULCN,newnu,nuzero,BETA,newDELTA,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,ALAT)
-    endif
+    open (1, file = 'scresults.dat', action = 'write')
+    write (1, *) newchempot
+    do i = 1, NUMT
+        write (1,'(4F15.7)') newnu(i), magnet(i), REAL(newDELTA(i)), AIMAG(newDELTA(i))
+    end do
+    close(1)
 
 	!This takes the DIFFERENT eigenvalues and organizes them in ascending order
 	!---------------------------------------------------------------------------------------------
@@ -584,35 +583,6 @@ program TB
         end do
 
     end subroutine FOURIERHAM
-
-    subroutine RANDOMKHAM(KPOINT,HAMILTONIANPREP,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,NUMT,HAMILTONIAN)
-        implicit none
-        real*8, intent(in) :: KPOINT(3)
-        integer :: NUMT, i, jneighb, MAXNEIGHB, NEIGHBNUM(NUMT), JATOM, JTYPE(MAXNEIGHB,NUMT)
-        real*8 :: hopping, HOPPVALS(MAXNEIGHB,NUMT), RPOINT(3), RCONNECT(3,MAXNEIGHB,NUMT)
-        complex*16 :: expon, HAMILTONIAN(4*NUMT,4*NUMT), HAMILTONIANPREP(4*NUMT,4*NUMT)
-
-        HAMILTONIAN(:,:) = HAMILTONIANPREP(:,:)
-
-        do i = 1, NUMT
-            do jneighb = 1, NEIGHBNUM(i)
-
-                RPOINT = RCONNECT(1:3,jneighb,i)
-                JATOM = JTYPE(jneighb,i)
-
-                hopping = HOPPVALS(jneighb,i)
-
-                expon = exp(-CI*DOT_PRODUCT(KPOINT,RPOINT))
-
-                HAMILTONIAN(i,JATOM) = HAMILTONIAN(i,JATOM) + expon*hopping
-                HAMILTONIAN(i + NUMT,JATOM + NUMT) = HAMILTONIAN(i + NUMT,JATOM + NUMT) + expon*hopping
-                HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) = HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) - CONJG(expon*hopping)
-                HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) = HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) - CONJG(expon*hopping)
-
-            end do
-        end do        
-
-    end subroutine RANDOMKHAM
 
     subroutine GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,lorentzbroad)
         implicit none
@@ -805,105 +775,6 @@ program TB
         endif
 
     end subroutine GREEN
-
-    subroutine BANDS(NUMT,W,WORK,LWORK,RWORK,INFO,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0, &
-        &ULCN,nu,nuzero,BETA,DELTA,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,ALAT)
-        implicit none
-
-        integer :: NUMDIR, i, io, j, m, NUMT, LWORK, INFO, intpointer, checker, MAXNEIGHB, NEIGHBNUM(NUMT), &
-        &JTYPE(MAXNEIGHB,NUMT)
-        integer, allocatable, dimension(:) :: KINTS
-        real*8 :: DIR(3), KPOINT(3), HORINT, W(4*NUMT), RWORK(3*(4*NUMT) - 2), chempot, E0(NUMT), ULCN(NUMT), &
-        &nu(NUMT), nuzero(NUMT), BETA(3,NUMT), ALAT, HOPPVALS(MAXNEIGHB,NUMT), RCONNECT(3,MAXNEIGHB,NUMT)
-        real*8, allocatable, dimension(:,:) :: INPOINT, OUTPOINT
-        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), WORK(LWORK), zPauli(2,2), IdentityPauli(2,2), xPauli(2,2), &
-        &yPauli(2,2), DELTA(NUMT), HAMILTONIANPREP(4*NUMT,4*NUMT)
-
-        ! The following reads the number of basis vectors from a file named basisvectors.dat
-        NUMDIR = 0
-        open (1, file = 'bandpoints.dat', action = 'read')
-        do
-            read(1,*,iostat=io)
-            if (io/=0) exit
-            NUMDIR = NUMDIR + 1
-        end do
-        close(1)
-
-        NUMDIR = NUMDIR - 2 ! To ignore the final 2 lines in basisvectors.dat which are the configuration settings.
-
-        allocate(INPOINT(3,NUMDIR))
-        allocate(OUTPOINT(3,NUMDIR))
-        allocate(KINTS(NUMDIR))
-
-        open(1, file = 'bandpoints.dat', action = 'read')
-        do i = 1, NUMDIR
-            read (1,*) INPOINT(1:3,i), OUTPOINT(1:3,i), KINTS(i)
-        end do
-        close(1)
-
-        ! Inverse space points, instead of configuration space input
-        do i = 1, NUMDIR
-            do j = 1, 3
-                INPOINT(j,i) = ((2.0*PI)/ALAT)*INPOINT(j,i)
-                OUTPOINT(j,i) = ((2.0*PI)/ALAT)*OUTPOINT(j,i)
-            end do
-        end do
-
-        print *, 'Press 0 to print only intervals and any other number to print k-values as well.'
-        read *, intpointer
-        HORINT = 0.0 ! This is a parameter that adjusts the widths for each k-dimension window at the band diagram
-        
-        open(2, file = 'bands.txt', action = 'write')
-        do i = 1, NUMDIR
-            
-            DIR = OUTPOINT(1:3,i) - INPOINT(1:3,i) ! Sets the direction along which we calculate K points
-            KPOINT = INPOINT(1:3,i) ! Startup of each k
-
-            ! In order to avoid taking some points twice
-            if (i /= NUMDIR) then
-                if (norm2(OUTPOINT(1:3,i) - INPOINT(1:3,i+1)) < 0.0001) then
-                    checker = KINTS(i)
-                else
-                    checker = KINTS(i)+1
-                endif
-            else
-                checker = KINTS(i)+1
-            endif
-
-            do j = 1, checker
-
-                call HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
-
-                call RANDOMKHAM(KPOINT,HAMILTONIANPREP,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,RCONNECT,NUMT,HAMILTONIAN)
-
-                ! N because we only want eigenvalues and not eigenvectors
-                call zheev ('N', 'U', 4*NUMT, HAMILTONIAN, 4*NUMT, W, WORK, LWORK, RWORK, INFO) ! Don't forget to reconfigure those whenever the dimensions change!
-                
-                if (intpointer == 0) then
-                    write (2,'(F17.8)', advance='no') HORINT
-                    do m = 1, 4*NUMT
-                        write (2,'(F17.8)', advance='no') W(m)
-                    end do
-                    write (2,*)
-                else 
-                    write (2,'(4F17.8)', advance='no') KPOINT, HORINT
-                    do m = 1, 4*NUMT
-                        write (2,'(F17.8)', advance='no') W(m)
-                    end do
-                    write (2,*)
-                endif
-
-                if (j /= checker) then
-                    KPOINT = KPOINT + (1.0/KINTS(i))*DIR
-                    HORINT = HORINT + (1.0/KINTS(i))*norm2(DIR)
-                endif
-
-            end do
-
-        end do
-        close(2)
-
-    end subroutine BANDS
 
     subroutine INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity)
         implicit none
