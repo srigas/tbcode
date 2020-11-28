@@ -1,21 +1,21 @@
-program TB
+program BDG
     implicit none
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, ini, fin, reps, &
-    & maxreps, uniquecounter, NUMIMP, imppointer, NUMCHEMTYPES, intnumdenpointer, NUME, metalorno, JATOM, rcheck,&
-    & MAXNEIGHB, FTIMO
+    & maxreps, uniquecounter, NUMCHEMTYPES, intnumdenpointer, NUME, metalorno, JATOM, rcheck, MAXNEIGHB, FTIMO
     integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE, NEIGHBNUM
-    integer, allocatable, dimension(:,:) :: IMPPTSVAR, JTYPE
+    integer, allocatable, dimension(:,:) :: JTYPE
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, RPOINT(3), TTPRIME(3),&
     &chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad, diffchem, newchempot, lambda, TOL,&
     &TOTDOSATMU
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, magnet, VSUPCOND, nuup, nudown, diffN, diffD, DOSATMU
-    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, BETA, LHOPS, PREFACTORS, NNDIS, HOPPVALS
+    real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, BETA, LHOPS, PREFACTORS, HOPPVALS
     real*8, allocatable, dimension(:,:,:) :: RCONNECT
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), inidelta
     complex*16, allocatable, dimension(:) :: WORK, DELTA, newDELTA, METALDELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, EIGENVECTORS, HAMILTONIANPREP
     complex*16, allocatable, dimension(:,:,:) :: EXPONS
+    character(len = 1) :: yesorno
 
     ! Important notice about write format. Example: format(5F17.8)
     ! 5F -> 5 = number of entries before changing row, F is because we want numbers
@@ -108,7 +108,6 @@ program TB
     NUMCHEMTYPES = MAXVAL(CHEMTYPE)
     allocate(LHOPS(NUMCHEMTYPES,NUMCHEMTYPES))
     allocate(PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES))
-    allocate(NNDIS(NUMCHEMTYPES,NUMCHEMTYPES))
 
     ! The *4 factors are now due to spin and particle-hole
     allocate(EIGENVECTORS(4*NUMT,4*NUMT*NUMK))
@@ -271,7 +270,11 @@ program TB
     print *, 'chempot = ', chempot
 
     ! We now perform a DoS calculation for the metal, in order to then be able to compare it to the SC.
-    call NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
+    print *, 'Calculate DoS for the metal? y/n'
+    read *, yesorno
+    if (yesorno == 'y') then
+        call NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
+    endif
 
     ! Using the chemical potential that we obtained, as well as the charges (nu), as initial values, we proceed to use them for the
     ! self-consistency cycle of the superconductor, i.e. Delta =/= 0.
@@ -430,38 +433,13 @@ program TB
     endif
 	!---------------------------------------------------------------------------------------------
 
-    call NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
-
-	!------------------------------------------------------------------------------------------------------------------
-
-    print *, 'Choose the input way for the impurity sites.'
-    print *, '0 to input via vectors, 1 to input via integers, other number to skip Greens functions calculations.'
-    read *, imppointer
-
-    if (imppointer == 0 .or. imppointer == 1) then
-        call IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
-
-        print *, 'Initiating Green functions calculations.'
-        call GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,lorentzbroad)
+    print *, 'Calculate DoS for the superconductor? y/n'
+    read *, yesorno
+    if (yesorno == 'y') then
+        call NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
     endif
 
-    ! Prepares two config files to be used by the impurity program
-    open (1, file = 'impconfig.dat', action = 'write')
-        write (1,*) NUMIMP, '! Number of impurities.'
-        write (1,*) NUME, '! Number of energy values.'
-    close(1)
-
-    open (1, file = 'impatoms.dat', action = 'write')
-    do i = 1, NUMIMP
-        j = IMPPTSVAR(4,i)
-        write (1,'(6F15.7, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), REAL(newDELTA(j)), &
-        &AIMAG(newDELTA(j)), '    ! Impurity No. ', i
-        write (1,*)
-    end do
-    write (1,'(A)') '------------------------------------------------------------'
-    write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,           Re(D),         Im(D)'
-    write (1,'(A)') 'Please insert the corresponding impurity value next to each element.'
-    close(1)
+	!------------------------------------------------------------------------------------------------------------------
 
     contains
 
@@ -583,198 +561,6 @@ program TB
         end do
 
     end subroutine FOURIERHAM
-
-    subroutine GREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,lorentzbroad)
-        implicit none
-
-        integer :: NUMT, NUMK, NUME, IE, i, j, k, n, ini, fin, NUMIMP, IMPPTSVAR(4,NUMIMP), &
-        &l, m, a, aprime, dosorno, FTIMO, FTJMO, NUMTKONE
-        real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
-        complex*16, allocatable, dimension(:) :: energies
-        real*8 :: PI, EIGENVALUES(4*NUMT*NUMK), energyintervals, lorentzbroad, &
-        &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3)
-        complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GK(4*NUMT,4*NUMT*NUMK),&
-        &GREENR(4*NUMIMP,4*NUMIMP), expon
-
-        ! This part sets up the E points to be used in plots concerning the Green's function
-        ! At the moment it simply gives NUME real energies.
-
-        print *, 'If you want to perform a DoS calculation using the Green functions press 0, otherwise press any other number.'
-        read *, dosorno
-
-        allocate(energies(NUME+1))
-        if (dosorno == 0) then
-            allocate(greendensityperatom(1+NUMT,NUME+1)) ! The first column is for the energies, the rest for the values
-            allocate(greendensity(2,NUME+1)) ! The first column is for the energies, the other for the values
-        endif
-
-        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/NUME
-
-        ! These are the "complex" energies E
-        do i = 1, NUME+1
-            energies(i) = dcmplx(MINVAL(EIGENVALUES) + energyintervals*(i-1), lorentzbroad)
-        end do
-
-        ! This part writes all the Fouriered Green function elements per energy at this text file
-        open(1, file = 'greenimp.txt', action = 'write')
-
-        do IE = 1, NUME+1 ! Begins a loop over the energies, in order to find G(E) for each E
-
-            EZ = energies(IE)
-
-            if (dosorno == 0) then
-                ! Startup values for the densities
-                greendensityperatom(1,IE) = REAL(EZ)
-                greendensity(1,IE) = REAL(EZ)
-                greendensity(2,IE) = 0.0
-                do i = 1, NUMT
-                    greendensityperatom(1+i,IE) = 0.0
-                end do
-            endif
-
-            ! This initiates the calculation of the Green's function matrix G(α,α';E) per k-point
-            do k = 1, NUMK ! k
-                NUMTKONE = 4*NUMT*(k-1)
-
-                ! Set all G-matrix values equal to zero, so that the following summation can work
-                GMATRIX(:,:) = (0.0,0.0)
-
-                do i = 1, NUMT ! α
-                    FTIMO = 4*(i-1)
-                    do j = 1, NUMT ! α'
-                        FTJMO = 4*(j-1)
-
-                        do n = 1, 4*NUMT ! This is the sum over all eigenenergies per k
-
-                            ENFRAC = (1.0/(EZ-EIGENVALUES(n + NUMTKONE)))
-                            
-                            GMATRIX(1 + FTIMO, 1 + FTJMO) = GMATRIX(1 + FTIMO, 1 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i,n + NUMTKONE)*CONJG(EIGENVECTORS(j,n+NUMTKONE)) ! 11
-                            GMATRIX(1 + FTIMO, 2 + FTJMO) = GMATRIX(1 + FTIMO, 2 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i,n + NUMTKONE)*CONJG(EIGENVECTORS(j+NUMT,n+NUMTKONE)) ! 12
-                            GMATRIX(1 + FTIMO, 3 + FTJMO) = GMATRIX(1 + FTIMO, 3 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i,n + NUMTKONE)*CONJG(EIGENVECTORS(j+2*NUMT,n+NUMTKONE)) ! 13
-                            GMATRIX(1 + FTIMO, 4 + FTJMO) = GMATRIX(1 + FTIMO, 4 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i,n + NUMTKONE)*CONJG(EIGENVECTORS(j+3*NUMT,n+NUMTKONE)) ! 14
-
-                            GMATRIX(2 + FTIMO, 1 + FTJMO) = GMATRIX(2 + FTIMO, 1 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j,n+NUMTKONE)) ! 21
-                            GMATRIX(2 + FTIMO, 2 + FTJMO) = GMATRIX(2 + FTIMO, 2 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+NUMT,n+NUMTKONE)) ! 22
-                            GMATRIX(2 + FTIMO, 3 + FTJMO) = GMATRIX(2 + FTIMO, 3 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+2*NUMT,n+NUMTKONE)) ! 23
-                            GMATRIX(2 + FTIMO, 4 + FTJMO) = GMATRIX(2 + FTIMO, 4 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+3*NUMT,n+NUMTKONE)) ! 24
-
-                            GMATRIX(3 + FTIMO, 1 + FTJMO) = GMATRIX(3 + FTIMO, 1 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+2*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j,n+NUMTKONE)) ! 31
-                            GMATRIX(3 + FTIMO, 2 + FTJMO) = GMATRIX(3 + FTIMO, 2 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+2*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+NUMT,n+NUMTKONE)) ! 32
-                            GMATRIX(3 + FTIMO, 3 + FTJMO) = GMATRIX(3 + FTIMO, 3 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+2*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+2*NUMT,n+NUMTKONE)) ! 33
-                            GMATRIX(3 + FTIMO, 4 + FTJMO) = GMATRIX(3 + FTIMO, 4 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+2*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+3*NUMT,n+NUMTKONE)) ! 34
-
-                            GMATRIX(4 + FTIMO, 1 + FTJMO) = GMATRIX(4 + FTIMO, 1 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+3*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j,n+NUMTKONE)) ! 41
-                            GMATRIX(4 + FTIMO, 2 + FTJMO) = GMATRIX(4 + FTIMO, 2 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+3*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+NUMT,n+NUMTKONE)) ! 42
-                            GMATRIX(4 + FTIMO, 3 + FTJMO) = GMATRIX(4 + FTIMO, 3 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+3*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+2*NUMT,n+NUMTKONE)) ! 43
-                            GMATRIX(4 + FTIMO, 4 + FTJMO) = GMATRIX(4 + FTIMO, 4 + FTJMO) +&
-                            &ENFRAC*EIGENVECTORS(i+3*NUMT,n + NUMTKONE)*CONJG(EIGENVECTORS(j+3*NUMT,n+NUMTKONE)) ! 44
-
-                        end do
-
-                    end do
-                end do
-
-                if (dosorno == 0) then
-                    do i = 1, NUMT ! Calculation of density for each atom
-                        FTIMO = 4*(i-1)
-                        do j = 1, 2 ! n = u↑u↑* + u↓u↓*
-                            greendensityperatom(1+i,IE) = greendensityperatom(1+i,IE) -&
-                            &(1.0/PI)*AIMAG(GMATRIX(j + FTIMO, j + FTIMO))
-                        end do
-                    end do
-                endif
-
-                ini = 1 + (k-1)*4*NUMT
-                fin = k*4*NUMT
-                GK(:,ini:fin) = GMATRIX ! This is a table that contains all G(α,α',k;E) per energy E
-            
-            end do ! ends k-sum
-
-            ! Fourier transform of G(k) into G(r-r')
-            ! This constructs a 4*NUMIMP x 4*NUMIMP G(r-r') matrix for each energy EZ
-
-            ! Startup
-            GREENR(:,:) = (0.0,0.0)
-            
-            do i = 1, NUMIMP
-                FTIMO = 4*(i-1)
-                do j = 1, NUMIMP
-                    FTJMO = 4*(j-1)
-
-                    a = IMPPTSVAR(4,i)
-                    aprime = IMPPTSVAR(4,j)
-                    RPOINT = IMPPTSVAR(1,i)*a_1 + IMPPTSVAR(2,i)*a_2 + IMPPTSVAR(3,i)*a_3
-                    RPRIMEPOINT = IMPPTSVAR(1,j)*a_1 + IMPPTSVAR(2,j)*a_2 + IMPPTSVAR(3,j)*a_3
-
-                    FOURIERVEC(1:3) = RPRIMEPOINT(1:3) - RPOINT(1:3) + TPTS(1:3,aprime) - TPTS(1:3,a)
-
-                    do k = 1, NUMK
-
-                        KPOINT = KPTS(1:3,k)
-                        expon = exp(-CI*DOT_PRODUCT(KPOINT,FOURIERVEC))
-
-                        do l = 1, 4
-                            do m = 1, 4
-                                GREENR(m + FTIMO, l + FTJMO) = GREENR(m + FTIMO, l + FTJMO) +&
-                                &expon*GK(m + 4*(a-1) , l + 4*(aprime-1) + NUMTKONE)                    
-                            end do
-                        end do
-
-                    end do
-
-                end do
-            end do
-
-            ! Writes the Green impurity elements on greenimp.txt
-            do i = 1, 4*NUMIMP
-                do j = 1, 4*NUMIMP
-                    write (1, '(F17.8,F17.8)') GREENR(i,j)
-                end do
-            end do
-
-            if (dosorno == 0) then
-                do i = 1, NUMT ! Calculation of full density
-                    greendensityperatom(i+1,IE) = greendensityperatom(i+1,IE)/NUMK ! Normalization
-                    greendensity(2,IE) = greendensity(2,IE) + greendensityperatom(1+i,IE)
-                end do
-            endif
-
-        end do ! ends energies sum
-        close(1) ! Closes the greenimp.txt file
-
-        if (dosorno == 0) then
-            open(1, file = 'greendensityperatom.txt', action = 'write')
-            do j = 1, NUME+1 ! Energies = Intervals + 1
-                do i = 1, NUMT+1
-                    write (1,'(F17.8)',advance='no') greendensityperatom(i,j)
-                end do
-                write (1,*)
-            end do
-            close(1)
-
-            open(1, file = 'greendensity.txt', action = 'write')
-            do j = 1, NUME+1 ! Energies = Intervals + 1
-                write (1,'(2F17.8)') greendensity(1,j), greendensity(2,j)
-            end do
-            close(1)
-        endif
-
-    end subroutine GREEN
 
     subroutine INT_NUM_DEN(uniquecounter,EIGENVALUES,NUMT,NUMK,SORTEDEIGVALS,multiplicity)
         implicit none
@@ -949,102 +735,6 @@ program TB
                 
     end subroutine RPTS
 
-    subroutine IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
-        implicit none
-
-        integer :: NUMIMP, i, j, io, NUMT, counter, imppointer
-        real*8 :: b_1(3), b_2(3), b_3(3), PI, IMPPOINT(3), TPOINT(3), RPOINT(3), a_1(3), a_2(3), a_3(3), TPTS(3,NUMT),&
-        &BASIS(3), eps
-        real*8, allocatable, dimension(:,:) :: IMPPTS
-        integer, allocatable, dimension(:,:) :: IMPPTSVAR
-
-        eps = 0.0001
-
-        NUMIMP = 0
-        if (imppointer == 0) then
-            ! Counts the number of impurities
-            open (1, file = 'impurities.dat', action = 'read')
-            do
-                read(1,*,iostat=io)
-                if (io/=0) exit
-                NUMIMP = NUMIMP + 1
-            end do
-            close(1)
-
-            NUMIMP = NUMIMP - 2
-
-            allocate(IMPPTS(3,NUMIMP))
-            allocate(IMPPTSVAR(4,NUMIMP)) ! This is an array with elements n_1, n_2, n_3, basis index, for each impurity site
-
-            ! Reads the impurities coordinates
-            open (1, file = 'impurities.dat', action = 'read')
-                do i = 1, NUMIMP
-                    read(1,*) IMPPTS(1:3,i)
-                end do
-            close(1)
-
-            ! Discerns the R + τ part for each impurity vector
-            do i = 1, NUMIMP
-                IMPPOINT = IMPPTS(1:3,i)
-
-                ! These find the R part
-                IMPPTSVAR(1,i) = FLOOR((1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_1)) ! n_1
-                IMPPTSVAR(2,i) = FLOOR((1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_2)) ! n_2
-                IMPPTSVAR(3,i) = FLOOR((1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_3)) ! n_3
-                RPOINT = IMPPTSVAR(1,i)*a_1 + IMPPTSVAR(2,i)*a_2 + IMPPTSVAR(3,i)*a_3
-
-                ! The remainder is the IMPPOINT-R = τ'
-                TPOINT = IMPPOINT - RPOINT
-
-                ! This tries to identify that remainder with a basis atom in the unit cell
-                counter = 0
-                do j = 1, NUMT
-                    BASIS = TPTS(1:3,j)
-
-                    if (abs(TPOINT(1)-BASIS(1)) <= eps .and. abs(TPOINT(2)-BASIS(2)) <= eps &
-                    &.and. abs(TPOINT(3)-BASIS(3)) <= eps) then
-                        counter = j
-                    endif
-                end do
-
-                if (counter == 0) then
-                    print *, 'The impurity No.', i, 'does not correspond to a lattice atom.'
-                    call exit(123)
-                else
-                    IMPPTSVAR(4,i) = counter
-                endif
-            end do
-        else
-            ! Counts the number of impurities
-            open (1, file = 'impvals.txt', action = 'read')
-            do
-                read(1,*,iostat=io)
-                if (io/=0) exit
-                NUMIMP = NUMIMP + 1
-            end do
-            close(1)
-
-            NUMIMP = NUMIMP - 2
-
-            allocate(IMPPTSVAR(4,NUMIMP)) ! This is an array with elements n_1, n_2, n_3, basis index, for each impurity site
-
-            ! Reads the impurities coordinates
-            open (1, file = 'impvals.txt', action = 'read')
-                do i = 1, NUMIMP
-                    read(1,*) IMPPTSVAR(1:4,i)
-                end do
-            close(1)
-
-            do i = 1, NUMIMP
-                if (IMPPTSVAR(4,i) > NUMT .or. IMPPTSVAR(4,i) <= 0) then
-                    print *, 'The impurity No.', i, 'does not correspond to a lattice atom.'
-                    call exit(123)
-                endif
-            end do
-        endif
-    
-    end subroutine IDENTIFIER
-
     subroutine CONSTANTS(s_0,s_1,s_2,s_3,CI,PI,KB) ! Sets some global constants
         implicit none
         complex*16 :: s_0(2,2), s_1(2,2), s_2(2,2), s_3(2,2), CI
@@ -1112,4 +802,4 @@ program TB
 		
     end function CROSS_PRODUCT
 
-end program TB
+end program BDG
