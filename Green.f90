@@ -1,7 +1,7 @@
 program GREEN
     implicit none
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, &
-    &NUMIMP, imppointer, NUMCHEMTYPES, NUME, JATOM, rcheck, MAXNEIGHB, dosorno
+    &NUMIMP, NUMCHEMTYPES, NUME, JATOM, rcheck, MAXNEIGHB, dosorno
     integer, allocatable, dimension(:) :: CHEMTYPE, NEIGHBNUM
     integer, allocatable, dimension(:,:) :: IMPPTSVAR, JTYPE
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), RPOINT(3), TTPRIME(3),&
@@ -13,6 +13,7 @@ program GREEN
     complex*16, allocatable, dimension(:) :: WORK, DELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, HAMILTONIANPREP
     complex*16, allocatable, dimension(:,:,:) :: EXPONS, EIGENVECTORS
+    character(len = 1) :: vecorints
 
     TOL = 0.0001 ! The fault tolerance for lattice vectors' norms
 
@@ -190,23 +191,26 @@ program GREEN
     print *, 'Please insert the imaginary part of the energies.'
     read *, eta
 
-    print *, 'Choose the input way for the impurity sites.'
-    print *, '0 to input via vectors, 1 to input via integers, other number to skip Greens functions calculations.'
-    read *, imppointer
+    print *, 'Choose the input way for the impurity sites, v/i.'
+    print *, 'v to input via vectors or i to input via integers.'
+    150 read *, vecorints
 
-    if (imppointer == 0 .or. imppointer == 1) then
-        call IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
+    if (vecorints /= 'v' .and. vecorints /= 'i') then
+        print *, 'Invalid input. Please choose v or i.'
+        goto 150
+    endif
 
-        print *, 'If you want to perform a DoS calculation using the Green functions press 0.'
-        print *, 'If you only want to study the impurity problem press any other number.'
-        read *, dosorno
+    call IDENTIFIER(vecorints,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
 
-        print *, 'Initiating Green functions calculations.'
-        if (dosorno == 0) then
-            call FULLGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta)
-        else
-            !call PARTIALGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta)
-        endif
+    print *, 'If you want to perform a DoS calculation using the Green functions press 0.'
+    print *, 'If you only want to study the impurity problem press any other number.'
+    read *, dosorno
+
+    print *, 'Initiating Green functions calculations.'
+    if (dosorno == 0) then
+        call FULLGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta)
+    else
+        call PARTIALGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta)
     endif
 
     ! Prepares two config files to be used by the impurity program
@@ -490,8 +494,11 @@ program GREEN
 
             do j = 1, NUMIMP
                 FTJMO = 4*(j-1)
+                aprime = IMPPTSVAR(4,j)
+
                 do i = 1, NUMIMP
                     FTIMO = 4*(i-1)
+                    a = IMPPTSVAR(4,i)
 
                     do k = 1, NUMK
 
@@ -540,6 +547,187 @@ program GREEN
         close(1)
 
     end subroutine FULLGREEN
+
+    subroutine PARTIALGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta)
+        implicit none
+
+        integer :: NUMT, NUMK, NUME, IE, i, j, k, n, NUMIMP, IMPPTSVAR(4,NUMIMP), min_val, max_val,&
+        &l, m, a, aprime, FTIMO, FTJMO, checker, IMPATOMTYPE(NUMIMP), uniquecounter, NUMATOMS, IATOM, JATOM
+        integer, allocatable, dimension(:) :: IMPATOMVALS, UNIQUEIMPATOMS
+        complex*16, allocatable, dimension(:) :: energies
+        real*8 :: EIGENVALUES(4*NUMT,NUMK), energyintervals, eta, &
+        &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3)
+        complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT,NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GFK(NUMK,4*NUMT,4*NUMT),&
+        &GREENR(4*NUMIMP,4*NUMIMP), FOUREXPONS(NUMK,NUMIMP**2)
+
+        ! This part sets up the E points to be used in plots concerning the Green's function
+        ! At the moment it simply gives NUME real energies.
+
+        allocate(energies(NUME+1))
+        
+        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/NUME
+
+        ! These are the "complex" energies E
+        do i = 1, NUME+1
+            energies(i) = dcmplx(MINVAL(EIGENVALUES) + energyintervals*(i-1), eta)
+        end do
+
+        ! Here we catalogue the different atom types, as numbered by their line on the basisvectors.dat file,
+        ! that correspond to the impurities of the problem.
+        IMPATOMTYPE(:) = IMPPTSVAR(4,:)
+        allocate(UNIQUEIMPATOMS(NUMIMP)) ! Helper array
+
+        uniquecounter = 0
+        min_val = MINVAL(IMPATOMTYPE) - 1 ! -1.0 Is inserted for a case of complete degeneracy
+        max_val = MAXVAL(IMPATOMTYPE)
+        do while (min_val < max_val)
+            uniquecounter = uniquecounter + 1
+            min_val = MINVAL(IMPATOMTYPE, mask = IMPATOMTYPE > min_val)
+            UNIQUEIMPATOMS(uniquecounter) = min_val
+        enddo
+        NUMATOMS = uniquecounter ! The number of basisvectos.dat atoms that enter the impurity problem. NUMATOMS < NUMT
+        allocate(IMPATOMVALS(NUMATOMS))
+        IMPATOMVALS = UNIQUEIMPATOMS(1:NUMATOMS)
+        ! IMPATOMVALS now contains only the unique atom types that enter the impurity problem, in ascending order.
+
+        ! The point of this subroutine, unlike the FULLGREEN subroutine, is to build the Green function only for the
+        ! atoms that enter the impurity problem and not all the atoms in basisvectors.dat
+        
+        ! This constructs the exponentials to be used in the Fourier transform
+        checker = 1
+        do j = 1, NUMIMP
+            do i = 1, NUMIMP
+
+                a = IMPPTSVAR(4,i)
+                aprime = IMPPTSVAR(4,j)
+                RPOINT = IMPPTSVAR(1,i)*a_1 + IMPPTSVAR(2,i)*a_2 + IMPPTSVAR(3,i)*a_3
+                RPRIMEPOINT = IMPPTSVAR(1,j)*a_1 + IMPPTSVAR(2,j)*a_2 + IMPPTSVAR(3,j)*a_3
+
+                FOURIERVEC(1:3) = RPRIMEPOINT(1:3) - RPOINT(1:3) + TPTS(1:3,aprime) - TPTS(1:3,a)
+
+                do k = 1, NUMK
+
+                    KPOINT = KPTS(1:3,k)
+                    FOUREXPONS(k,checker) = exp(-CI*DOT_PRODUCT(KPOINT,FOURIERVEC))
+
+                end do
+                checker = checker + 1
+            end do
+        end do
+
+        ! This part writes all the Fouriered Green function elements per energy at this text file
+        open(1, file = 'greenimp.txt', action = 'write')
+
+        do IE = 1, NUME+1 ! Begins a loop over the energies, in order to find G(E) for each E
+
+            EZ = energies(IE)
+
+            ! This initiates the calculation of the Green's function matrix G(α,α';E) per k-point
+            do k = 1, NUMK ! k
+
+                ! Set all G-matrix values equal to zero, so that the following summation can work
+                GMATRIX(:,:) = (0.0,0.0)
+
+                do i = 1, NUMATOMS ! α
+                    IATOM = IMPATOMVALS(i)
+                    FTIMO = 4*(IATOM-1)
+
+                    do j = 1, NUMATOMS ! α'
+                        JATOM = IMPATOMVALS(j)
+                        FTJMO = 4*(JATOM-1)
+
+                        do n = 1, 4*NUMT ! This is the sum over all eigenenergies per k
+
+                            ENFRAC = (1.0/(EZ-EIGENVALUES(n,k)))
+                            
+                            GMATRIX(1 + FTIMO, 1 + FTJMO) = GMATRIX(1 + FTIMO, 1 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM,n,k)*CONJG(EIGENVECTORS(JATOM,n,k)) ! 11
+                            GMATRIX(1 + FTIMO, 2 + FTJMO) = GMATRIX(1 + FTIMO, 2 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM,n,k)*CONJG(EIGENVECTORS(JATOM+NUMT,n,k)) ! 12
+                            GMATRIX(1 + FTIMO, 3 + FTJMO) = GMATRIX(1 + FTIMO, 3 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM,n,k)*CONJG(EIGENVECTORS(JATOM+2*NUMT,n,k)) ! 13
+                            GMATRIX(1 + FTIMO, 4 + FTJMO) = GMATRIX(1 + FTIMO, 4 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM,n,k)*CONJG(EIGENVECTORS(JATOM+3*NUMT,n,k)) ! 14
+
+                            GMATRIX(2 + FTIMO, 1 + FTJMO) = GMATRIX(2 + FTIMO, 1 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+NUMT,n,k)*CONJG(EIGENVECTORS(JATOM,n,k)) ! 21
+                            GMATRIX(2 + FTIMO, 2 + FTJMO) = GMATRIX(2 + FTIMO, 2 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+NUMT,n,k)*CONJG(EIGENVECTORS(JATOM+NUMT,n,k)) ! 22
+                            GMATRIX(2 + FTIMO, 3 + FTJMO) = GMATRIX(2 + FTIMO, 3 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+NUMT,n,k)*CONJG(EIGENVECTORS(JATOM+2*NUMT,n,k)) ! 23
+                            GMATRIX(2 + FTIMO, 4 + FTJMO) = GMATRIX(2 + FTIMO, 4 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+NUMT,n,k)*CONJG(EIGENVECTORS(JATOM+3*NUMT,n,k)) ! 24
+
+                            GMATRIX(3 + FTIMO, 1 + FTJMO) = GMATRIX(3 + FTIMO, 1 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+2*NUMT,n,k)*CONJG(EIGENVECTORS(JATOM,n,k)) ! 31
+                            GMATRIX(3 + FTIMO, 2 + FTJMO) = GMATRIX(3 + FTIMO, 2 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+2*NUMT,n,k)*CONJG(EIGENVECTORS(JATOM+NUMT,n,k)) ! 32
+                            GMATRIX(3 + FTIMO, 3 + FTJMO) = GMATRIX(3 + FTIMO, 3 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+2*NUMT,n,k)*CONJG(EIGENVECTORS(JATOM+2*NUMT,n,k)) ! 33
+                            GMATRIX(3 + FTIMO, 4 + FTJMO) = GMATRIX(3 + FTIMO, 4 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+2*NUMT,n,k)*CONJG(EIGENVECTORS(JATOM+3*NUMT,n,k)) ! 34
+
+                            GMATRIX(4 + FTIMO, 1 + FTJMO) = GMATRIX(4 + FTIMO, 1 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+3*NUMT,n,k)*CONJG(EIGENVECTORS(JATOM,n,k)) ! 41
+                            GMATRIX(4 + FTIMO, 2 + FTJMO) = GMATRIX(4 + FTIMO, 2 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+3*NUMT,n,k)*CONJG(EIGENVECTORS(JATOM+NUMT,n,k)) ! 42
+                            GMATRIX(4 + FTIMO, 3 + FTJMO) = GMATRIX(4 + FTIMO, 3 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+3*NUMT,n,k)*CONJG(EIGENVECTORS(JATOM+2*NUMT,n,k)) ! 43
+                            GMATRIX(4 + FTIMO, 4 + FTJMO) = GMATRIX(4 + FTIMO, 4 + FTJMO) +&
+                            &ENFRAC*EIGENVECTORS(IATOM+3*NUMT,n,k)*CONJG(EIGENVECTORS(JATOM+3*NUMT,n,k)) ! 44
+
+                        end do
+
+                    end do
+
+                end do
+                
+                GFK(k,:,:) = GMATRIX ! This is a table that contains all G(α,α',k;E) per energy E
+            
+            end do ! ends k-loop
+
+            ! Fourier transform of G(k) into G(r-r')
+            ! This constructs a 4*NUMIMP x 4*NUMIMP G(r-r') matrix for each energy EZ
+
+            ! Startup
+            GREENR(:,:) = (0.0,0.0)
+            checker = 1
+
+            do j = 1, NUMIMP
+                FTJMO = 4*(j-1)
+                aprime = IMPPTSVAR(4,j)
+
+                do i = 1, NUMIMP
+                    FTIMO = 4*(i-1)
+                    a = IMPPTSVAR(4,i)                
+
+                    do k = 1, NUMK
+
+                        do m = 1, 4
+                            do l = 1, 4
+                                GREENR(m + FTIMO, l + FTJMO) = GREENR(m + FTIMO, l + FTJMO) +&
+                                &FOUREXPONS(k,checker)*GFK(k, m + 4*(a-1) , l + 4*(aprime-1))                    
+                            end do
+                        end do
+
+                    end do
+
+                    checker = checker + 1
+
+                end do
+            end do
+
+            ! Writes the Green impurity elements on greenimp.txt
+            do i = 1, 4*NUMIMP
+                do j = 1, 4*NUMIMP
+                    write (1, '(F17.8,F17.8)') GREENR(i,j)
+                end do
+            end do
+
+        end do ! ends energies sum
+        close(1) ! Closes the greenimp.txt file
+
+    end subroutine PARTIALGREEN
 
     subroutine BZ(a,b,c,N_x,N_y,N_z,PI,KPTS,Ntot,b_1,b_2,b_3)
         implicit none
@@ -595,19 +783,20 @@ program GREEN
                 
     end subroutine RPTS
 
-    subroutine IDENTIFIER(imppointer,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
+    subroutine IDENTIFIER(vecorints,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
         implicit none
 
-        integer :: NUMIMP, i, j, io, NUMT, counter, imppointer
+        integer :: NUMIMP, i, j, io, NUMT, counter
         real*8 :: b_1(3), b_2(3), b_3(3), PI, IMPPOINT(3), TPOINT(3), RPOINT(3), a_1(3), a_2(3), a_3(3), TPTS(3,NUMT),&
         &BASIS(3), eps
         real*8, allocatable, dimension(:,:) :: IMPPTS
         integer, allocatable, dimension(:,:) :: IMPPTSVAR
+        character(len = 1) :: vecorints
 
         eps = 0.0001
 
         NUMIMP = 0
-        if (imppointer == 0) then
+        if (vecorints == 'v') then
             ! Counts the number of impurities
             open (1, file = 'impurities.dat', action = 'read')
             do
