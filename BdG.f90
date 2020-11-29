@@ -596,7 +596,6 @@ program BDG
 
     end subroutine INT_NUM_DEN
 
-    ! --------------------------------------------------------------------------------------------------------------------------------
     subroutine NUM_DEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,NUME,lorentzbroad,metalorno)
         implicit none
 
