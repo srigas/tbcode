@@ -203,7 +203,7 @@ program BDGLAYERS
     end do
 
 	! These configurations ensure that the following while loop is initiated
-    epsilon = 0.001
+    epsilon = 0.0001
     metalorno = 1
     diffchem = 1.0
     reps = 0
@@ -286,6 +286,7 @@ program BDGLAYERS
     ! Using the chemical potential that we obtained, as well as the charges (nu), as initial values, we proceed to use them for the
     ! self-consistency cycle of the superconductor, i.e. Delta =/= 0.
     metalorno = 0
+    epsilon = 0.000001
     reps = 0
     diffchem = 1.0
     do i = 1, NUMT
