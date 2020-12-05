@@ -5,10 +5,12 @@ program BDG_IMP
     integer, allocatable, dimension(:) :: IPIV
     real*8 :: PI, KB, tempval1, tempval2
     real*8, allocatable, dimension(:) :: E0, E0IMP
-    real*8, allocatable, dimension(:,:) :: BETA, BETAIMP
-    complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), ONE, MINUSONE, posham(2,2)
-    complex*16, allocatable, dimension(:) :: DELTA, DELTAIMP
+    real*8, allocatable, dimension(:,:) :: BETA, BETAIMP, densityperimpurity
+    complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), ONE, MINUSONE, posham(2,2), EZ
+    complex*16, allocatable, dimension(:) :: DELTA, DELTAIMP, energies
     complex*16, allocatable, dimension(:,:) :: GREEN, HAMIMP, IDENTITY
+
+    print *, 'Initiating the impurity problem calculations.'
 
     call CONSTANTS(IdentityPauli,xPauli,yPauli,zPauli,CI,PI,KB) ! Sets some universal constants.
 
@@ -28,7 +30,17 @@ program BDG_IMP
     allocate(HAMIMP(4*NUMIMP,4*NUMIMP))
     allocate(IDENTITY(4*NUMIMP,4*NUMIMP))
 
+    allocate(energies(NUME+1))
+    allocate(densityperimpurity(1+NUMIMP,NUME+1))
+
     allocate(IPIV(4*NUMIMP))
+
+    open(1, file = 'energies.dat', action = 'read')
+    do i = 1, NUME+1
+        read(1,*) tempval1, tempval2
+        energies(i) = dcmplx(tempval1, tempval2)
+    end do
+    close(1)
 
     open(1, file = 'impatoms.dat', action = 'read')
     do i = 1, NUMIMP
@@ -71,8 +83,16 @@ program BDG_IMP
 
     end do
 
+    print *, 'Commencing the calculation of G_imp for each energy value.'
+
     ! This commences the calculation of the impurity Green's function for each energy E
     do IE = 1, NUME+1
+
+        EZ = energies(IE)
+        densityperimpurity(1,IE) = REAL(EZ)
+        do i = 1, NUMIMP
+            densityperimpurity(1+i,IE) = 0.0
+        end do
         
         ! Constructs a 4*NUMIMP x 4*NUMIMP Identity matrix
         IDENTITY(:,:) = (0.0,0.0)
@@ -81,7 +101,7 @@ program BDG_IMP
         end do
     
         ! This reads the G_0 matrix from the output greenimp.txt of BdG.f90 for each energy E
-        open(1, file = 'greenimp.txt', action = 'read')
+        open(1, file = 'greenhost.txt', action = 'read')
         if (IE /= 1) then
             do i = 1, (IE-1)*(4*NUMIMP)**2 ! Skips the proper number of lines
                 read (1,*)
@@ -112,7 +132,15 @@ program BDG_IMP
         call ZGETRF (4*NUMIMP, 4*NUMIMP, IDENTITY, 4*NUMIMP, IPIV, INFO)
         call ZGETRS ('N', 4*NUMIMP, 4*NUMIMP, IDENTITY, 4*NUMIMP, IPIV, GREEN, 4*NUMIMP, INFO)
 
-        open(1, file = 'greenimpNEW.txt', action = 'readwrite')
+        do i = 1, NUMIMP ! Calculation of density for each atom
+            FTIMO = 4*(i-1)
+            do j = 1, 2 ! n = u↑u↑* + u↓u↓*
+                densityperimpurity(1+i,IE) = densityperimpurity(1+i,IE) -&
+                &(1.0/PI)*AIMAG(GREEN(j + FTIMO, j + FTIMO))
+            end do
+        end do
+
+        open(1, file = 'greenimp.txt', action = 'readwrite')
         if (IE /= 1) then
             do i = 1, (IE-1)*(4*NUMIMP)**2 ! Skips the proper number of lines
                 read (1,*)
@@ -132,6 +160,17 @@ program BDG_IMP
         close(1)
 
     end do
+
+    print *, 'G_imp calculated.'
+
+    open(1, file = 'impdensities.txt', action = 'write')
+        do j = 1, NUME+1 ! Energies = Intervals + 1
+            do i = 1, NUMIMP+1
+                write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+            end do
+            write (1,*)
+        end do
+    close(1)
 
     contains
 

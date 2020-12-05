@@ -202,7 +202,7 @@ program GREEN
 
     call IDENTIFIER(vecorints,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
 
-    print *, 'If you want to perform a DoS calculation using the Green functions press 0.'
+    print *, 'If you want to get the full G(k) function and calculate the DoS press 0.'
     print *, 'If you only want to study the impurity problem press any other number.'
     read *, dosorno
 
@@ -228,7 +228,7 @@ program GREEN
     end do
     write (1,'(A)') '------------------------------------------------------------'
     write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,           Re(D),         Im(D)'
-    write (1,'(A)') 'Please insert the corresponding impurity value next to each element.'
+    write (1,'(A)') 'Please insert the corresponding impurity value under each element.'
     close(1)
 
     contains
@@ -357,19 +357,23 @@ program GREEN
 
         integer :: NUMT, NUMK, NUME, IE, i, j, k, n, NUMIMP, IMPPTSVAR(4,NUMIMP), &
         &l, m, a, aprime, FTIMO, FTJMO, checker
-        real*8, allocatable, dimension(:,:) :: greendensityperatom, greendensity
-        complex*16, allocatable, dimension(:) :: energies
-        real*8 :: PI, EIGENVALUES(4*NUMT,NUMK), energyintervals, eta, &
-        &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3)
+        real*8 :: PI, EIGENVALUES(4*NUMT,NUMK), energyintervals, eta, greendensityperatom(1+NUMT,NUME+1), &
+        &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3),&
+        &greendensity(2,NUME+1), densityperimpurity(1+NUMIMP,NUME+1)
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT,NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GFK(NUMK,4*NUMT,4*NUMT),&
-        &GREENR(4*NUMIMP,4*NUMIMP), FOUREXPONS(NUMK,NUMIMP**2)
+        &GREENR(4*NUMIMP,4*NUMIMP), FOUREXPONS(NUMK,NUMIMP**2), energies(NUME+1)
+        character(len = 1) :: impdosyesorno
 
         ! This part sets up the E points to be used in plots concerning the Green's function
         ! At the moment it simply gives NUME real energies.
 
-        allocate(energies(NUME+1))
-        allocate(greendensityperatom(1+NUMT,NUME+1)) ! The first column is for the energies, the rest for the values
-        allocate(greendensity(2,NUME+1)) ! The first column is for the energies, the other for the values
+        print *, 'Should the program calculate the initial DoS for each future impurity site? y/n'
+        170 read *, impdosyesorno
+
+        if (impdosyesorno /= 'n' .and. impdosyesorno /= 'y') then
+            print *, 'Invalid input. Please choose y or n.'
+            goto 170
+        endif
 
         energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/NUME
 
@@ -401,7 +405,7 @@ program GREEN
         end do
 
         ! This part writes all the Fouriered Green function elements per energy at this text file
-        open(1, file = 'greenimp.txt', action = 'write')
+        open(1, file = 'greenhost.txt', action = 'write')
 
         do IE = 1, NUME+1 ! Begins a loop over the energies, in order to find G(E) for each E
 
@@ -414,6 +418,13 @@ program GREEN
             do i = 1, NUMT
                 greendensityperatom(1+i,IE) = 0.0
             end do
+
+            if (impdosyesorno == 'y') then
+                densityperimpurity(1,IE) = REAL(EZ)
+                do i = 1, NUMIMP
+                    densityperimpurity(1+i,IE) = 0.0
+                end do
+            endif
 
             ! This initiates the calculation of the Green's function matrix G(α,α';E) per k-point
             do k = 1, NUMK ! k
@@ -505,7 +516,7 @@ program GREEN
                         do m = 1, 4
                             do l = 1, 4
                                 GREENR(m + FTIMO, l + FTJMO) = GREENR(m + FTIMO, l + FTJMO) +&
-                                &FOUREXPONS(k,checker)*GFK(k, m + 4*(a-1) , l + 4*(aprime-1))                    
+                                &(1.0/NUMK)*FOUREXPONS(k,checker)*GFK(k, m + 4*(a-1) , l + 4*(aprime-1))                    
                             end do
                         end do
 
@@ -516,7 +527,17 @@ program GREEN
                 end do
             end do
 
-            ! Writes the Green impurity elements on greenimp.txt
+            if (impdosyesorno == 'y') then
+                do i = 1, NUMIMP ! Calculation of density for each impurity atom
+                    FTIMO = 4*(i-1)
+                    do j = 1, 2 ! n = u↑u↑* + u↓u↓*
+                        densityperimpurity(1+i,IE) = densityperimpurity(1+i,IE) -&
+                        &(1.0/PI)*AIMAG(GREENR(j + FTIMO, j + FTIMO))
+                    end do
+                end do
+            endif
+
+            ! Writes the Green impurity elements on greenhost.txt
             do i = 1, 4*NUMIMP
                 do j = 1, 4*NUMIMP
                     write (1, '(F17.8,F17.8)') GREENR(i,j)
@@ -525,7 +546,7 @@ program GREEN
 
             do i = 1, NUMT ! Calculation of full density
                 greendensityperatom(i+1,IE) = greendensityperatom(i+1,IE)/NUMK ! Normalization
-                greendensity(2,IE) = greendensity(2,IE) + greendensityperatom(1+i,IE)
+                greendensity(2,IE) = greendensity(2,IE) + (1.0/NUMT)*greendensityperatom(1+i,IE)
             end do
 
         end do ! ends energies sum
@@ -537,6 +558,24 @@ program GREEN
                 write (1,'(F17.8)',advance='no') greendensityperatom(i,j)
             end do
             write (1,*)
+        end do
+        close(1)
+
+        ! The density per atom at the future impurity sites.
+        if (impdosyesorno == 'y') then 
+            open(1, file = 'hostdensities.txt', action = 'write')
+            do j = 1, NUME+1 ! Energies = Intervals + 1
+                do i = 1, NUMIMP+1
+                    write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                end do
+                write (1,*)
+            end do
+            close(1)
+        endif
+
+        open(1, file = 'energies.dat', action = 'write')
+        do i = 1, NUME+1
+            write (1, '(2F17.8)') energies(i)
         end do
         close(1)
 
@@ -554,16 +593,22 @@ program GREEN
         integer :: NUMT, NUMK, NUME, IE, i, j, k, n, NUMIMP, IMPPTSVAR(4,NUMIMP), min_val, max_val,&
         &l, m, a, aprime, FTIMO, FTJMO, checker, IMPATOMTYPE(NUMIMP), uniquecounter, NUMATOMS, IATOM, JATOM
         integer, allocatable, dimension(:) :: IMPATOMVALS, UNIQUEIMPATOMS
-        complex*16, allocatable, dimension(:) :: energies
-        real*8 :: EIGENVALUES(4*NUMT,NUMK), energyintervals, eta, &
+        real*8 :: EIGENVALUES(4*NUMT,NUMK), energyintervals, eta, densityperimpurity(1+NUMIMP,NUME+1),&
         &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3)
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT,NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GFK(NUMK,4*NUMT,4*NUMT),&
-        &GREENR(4*NUMIMP,4*NUMIMP), FOUREXPONS(NUMK,NUMIMP**2)
+        &GREENR(4*NUMIMP,4*NUMIMP), FOUREXPONS(NUMK,NUMIMP**2), energies(NUME+1)
+        character(len = 1) :: impdosyesorno
 
         ! This part sets up the E points to be used in plots concerning the Green's function
         ! At the moment it simply gives NUME real energies.
 
-        allocate(energies(NUME+1))
+        print *, 'Should the program calculate the initial DoS for each future impurity site? y/n'
+        170 read *, impdosyesorno
+
+        if (impdosyesorno /= 'n' .and. impdosyesorno /= 'y') then
+            print *, 'Invalid input. Please choose y or n.'
+            goto 170
+        endif
         
         energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/NUME
 
@@ -616,11 +661,18 @@ program GREEN
         end do
 
         ! This part writes all the Fouriered Green function elements per energy at this text file
-        open(1, file = 'greenimp.txt', action = 'write')
+        open(1, file = 'greenhost.txt', action = 'write')
 
         do IE = 1, NUME+1 ! Begins a loop over the energies, in order to find G(E) for each E
 
             EZ = energies(IE)
+
+            if (impdosyesorno == 'y') then
+                densityperimpurity(1,IE) = REAL(EZ)
+                do i = 1, NUMIMP
+                    densityperimpurity(1+i,IE) = 0.0
+                end do
+            endif
 
             ! This initiates the calculation of the Green's function matrix G(α,α';E) per k-point
             do k = 1, NUMK ! k
@@ -706,7 +758,7 @@ program GREEN
                         do m = 1, 4
                             do l = 1, 4
                                 GREENR(m + FTIMO, l + FTJMO) = GREENR(m + FTIMO, l + FTJMO) +&
-                                &FOUREXPONS(k,checker)*GFK(k, m + 4*(a-1) , l + 4*(aprime-1))                    
+                                &(1.0/NUMK)*FOUREXPONS(k,checker)*GFK(k, m + 4*(a-1) , l + 4*(aprime-1))                    
                             end do
                         end do
 
@@ -717,7 +769,17 @@ program GREEN
                 end do
             end do
 
-            ! Writes the Green impurity elements on greenimp.txt
+            if (impdosyesorno == 'y') then
+                do i = 1, NUMIMP ! Calculation of density for each impurity atom
+                    FTIMO = 4*(i-1)
+                    do j = 1, 2 ! n = u↑u↑* + u↓u↓*
+                        densityperimpurity(1+i,IE) = densityperimpurity(1+i,IE) -&
+                        &(1.0/PI)*AIMAG(GREENR(j + FTIMO, j + FTIMO))
+                    end do
+                end do
+            endif
+
+            ! Writes the Green impurity elements on greenhost.txt
             do i = 1, 4*NUMIMP
                 do j = 1, 4*NUMIMP
                     write (1, '(F17.8,F17.8)') GREENR(i,j)
@@ -726,6 +788,24 @@ program GREEN
 
         end do ! ends energies sum
         close(1) ! Closes the greenimp.txt file
+
+        ! The density per atom at the future impurity sites.
+        if (impdosyesorno == 'y') then 
+            open(1, file = 'hostdensities.txt', action = 'write')
+            do j = 1, NUME+1 ! Energies = Intervals + 1
+                do i = 1, NUMIMP+1
+                    write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                end do
+                write (1,*)
+            end do
+            close(1)
+        endif
+        
+        open(1, file = 'energies.dat', action = 'write')
+        do i = 1, NUME+1
+            write (1, '(2F17.8)') energies(i)
+        end do
+        close(1)
 
     end subroutine PARTIALGREEN
 
