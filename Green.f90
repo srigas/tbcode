@@ -566,7 +566,11 @@ program GREEN
             open(1, file = 'hostdensities.txt', action = 'write')
             do j = 1, NUME+1 ! Energies = Intervals + 1
                 do i = 1, NUMIMP+1
-                    write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                    if (i == NUMIMP+1) then
+                        write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                    else
+                        write (1,'(F17.8, A)',advance='no') densityperimpurity(i,j), ','
+                    endif
                 end do
                 write (1,*)
             end do
@@ -794,13 +798,17 @@ program GREEN
             open(1, file = 'hostdensities.txt', action = 'write')
             do j = 1, NUME+1 ! Energies = Intervals + 1
                 do i = 1, NUMIMP+1
-                    write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                    if (i == NUMIMP+1) then
+                        write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                    else
+                        write (1,'(F17.8, A)',advance='no') densityperimpurity(i,j), ','
+                    endif
                 end do
                 write (1,*)
             end do
             close(1)
         endif
-        
+
         open(1, file = 'energies.dat', action = 'write')
         do i = 1, NUME+1
             write (1, '(2F17.8)') energies(i)

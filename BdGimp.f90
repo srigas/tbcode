@@ -166,7 +166,11 @@ program BDG_IMP
     open(1, file = 'impdensities.txt', action = 'write')
         do j = 1, NUME+1 ! Energies = Intervals + 1
             do i = 1, NUMIMP+1
-                write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                if (i == NUMIMP+1) then
+                    write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                else
+                    write (1,'(F17.8, A)',advance='no') densityperimpurity(i,j), ','
+                endif
             end do
             write (1,*)
         end do
