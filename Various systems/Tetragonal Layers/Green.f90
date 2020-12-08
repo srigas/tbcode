@@ -13,7 +13,7 @@ program GREEN
     complex*16, allocatable, dimension(:) :: WORK, DELTA
     complex*16, allocatable, dimension(:,:) :: HAMILTONIAN, HAMILTONIANPREP
     complex*16, allocatable, dimension(:,:,:) :: EXPONS, EIGENVECTORS
-    character(len = 1) :: vecorints
+    character(len = 1) :: vecorints, yesorno
 
     TOL = 0.0001 ! The fault tolerance for lattice vectors' norms
 
@@ -223,19 +223,172 @@ program GREEN
         write (1,*) NUME, '! Number of energy values.'
     close(1)
 
-    open (1, file = 'impatoms.dat', action = 'write')
-    do i = 1, NUMIMP
-        j = IMPPTSVAR(4,i)
-        write (1,'(6F15.7, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), REAL(DELTA(j)), &
-        &AIMAG(DELTA(j)), '    ! Impurity No. ', i
-        write (1,*)
-    end do
-    write (1,'(A)') '------------------------------------------------------------'
-    write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,           Re(D),         Im(D)'
-    write (1,'(A)') 'Please insert the corresponding impurity value under each element.'
-    close(1)
+    print *, 'Do you want to study the magnetic chain problem? y/n'
+    140 read*, yesorno
+
+    if (yesorno == 'n') then
+        open (1, file = 'impatoms.dat', action = 'write')
+        do i = 1, NUMIMP
+            j = IMPPTSVAR(4,i)
+            write (1,'(6F15.7, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), REAL(DELTA(j)), &
+            &AIMAG(DELTA(j)), '    ! Impurity No. ', i
+            write (1,*)
+        end do
+        write (1,'(A)') '------------------------------------------------------------'
+        write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,           Re(D),         Im(D)'
+        write (1,'(A)') 'Please insert the corresponding impurity value under each element.'
+        close(1)
+    else if (yesorno == 'y') then
+        call MAGCHAIN(NUMT,NUMIMP,PI,E0,BETA,DELTA,IMPPTSVAR)
+    else
+        print *, 'Invalid input, please answer y or n.'
+        goto 140
+    endif
 
     contains
+
+    subroutine MAGCHAIN(NUMT,NUMIMP,PI,E0,BETA,DELTA,IMPPTSVAR)
+        implicit none
+
+        integer :: NUMT, NUMIMP, num, denom, i, IMPPTSVAR(4,NUMIMP)
+        real*8 :: ROTAXIS(3), theta, E0(NUMT), BETA(3,NUMT), NEWBETA(3,NUMIMP), PI, magB, initheta, TOL, &
+        &ROTMATRIX(3,3), INBETA(3), OUTBETA(3), one, zero, sine, cosine
+        complex*16 :: DELTA(NUMT)
+
+        TOL = 0.000001 ! The tolerance for the "if" checks.
+
+        print *, 'Please enter the coordinates of the unit vector around which the magnetic field rotates.'
+        print *, 'Example, for a rotation around the x-axis enter 1.0,0.0,0.0.'
+        read*, ROTAXIS
+
+        print *, 'The effective magnetic field rotates across the chain by a constant angle a*PI/b.'
+        print *, 'Please insert a (integer).'
+        read *, num
+        print *, 'Please insert b (integer).'
+        read *, denom
+
+        theta = (num*PI)/denom
+
+        if (abs(ROTAXIS(1) - 1.0) < TOL .and. abs(ROTAXIS(2)) < TOL .and. abs(ROTAXIS(3)) < TOL) then
+            ! This is a rotation equivalent to a rotation by the x-axis (i.e. in the y-z plane)
+            print *, 'Please enter the starting angle with respect to the z-axis.'
+            print *, 'Format a*PI/b, with a, b: integers. Please enter a.'
+            read *, num
+            print *, 'Please enter b.'
+            read *, denom
+
+            initheta = (num*PI)/denom
+
+            print *, 'Please enter the magnitude of B.'
+            read *, magB
+
+            do i = 1, NUMIMP
+                if (i == 1) then
+                    NEWBETA(1,i) = 0.0
+                    NEWBETA(2,i) = magB*SIN(initheta)
+                    NEWBETA(3,i) = magB*COS(initheta)
+                else
+                    NEWBETA(1,i) = 0.0
+                    NEWBETA(2,i) = magB*SIN(initheta + (i-1)*theta)
+                    NEWBETA(3,i) = magB*COS(initheta + (i-1)*theta)
+                endif
+            end do
+        else if (abs(ROTAXIS(1)) < TOL .and. abs(ROTAXIS(2) - 1.0) < TOL .and. abs(ROTAXIS(3)) < TOL) then
+            ! This is a rotation equivalent to a rotation by the y-axis (i.e. in the x-z plane)
+            print *, 'Please enter the starting angle with respect to the x-axis.'
+            print *, 'Format a*PI/b, with a, b: integers. Please enter a.'
+            read *, num
+            print *, 'Please enter b.'
+            read *, denom
+
+            initheta = (num*PI)/denom
+
+            print *, 'Please enter the magnitude of B.'
+            read *, magB
+
+            do i = 1, NUMIMP
+                if (i == 1) then
+                    NEWBETA(1,i) = magB*COS(initheta)
+                    NEWBETA(2,i) = 0.0 
+                    NEWBETA(3,i) = magB*SIN(initheta)
+                else
+                    NEWBETA(1,i) = magB*COS(initheta + (i-1)*theta)
+                    NEWBETA(2,i) = 0.0
+                    NEWBETA(3,i) = magB*SIN(initheta + (i-1)*theta)
+                endif
+            end do
+        else if (abs(ROTAXIS(1)) < TOL .and. abs(ROTAXIS(2)) < TOL .and. abs(ROTAXIS(3) - 1.0) < TOL) then
+            ! This is a rotation equivalent to a rotation by the z-axis (i.e. in the x-y plane)
+            print *, 'Please enter the starting angle with respect to the x-axis.'
+            print *, 'Format a*PI/b, with a, b: integers. Please enter a.'
+            read *, num
+            print *, 'Please enter b.'
+            read *, denom
+
+            initheta = (num*PI)/denom
+
+            print *, 'Please enter the magnitude of B.'
+            read *, magB
+
+            do i = 1, NUMIMP
+                if (i == 1) then
+                    NEWBETA(1,i) = magB*COS(initheta)
+                    NEWBETA(2,i) = magB*SIN(initheta)
+                    NEWBETA(3,i) = 0.0
+                else
+                    NEWBETA(1,i) = magB*COS(initheta + (i-1)*theta)
+                    NEWBETA(2,i) = magB*SIN(initheta + (i-1)*theta)
+                    NEWBETA(3,i) = 0.0
+                endif
+            end do
+        else
+            ! This is the case where we want to rotate B along an arbitrary axis.
+            print *, 'Please enter the value of B for the first atom of the chain. Format Bx,By,Bz.'
+            read *, NEWBETA(:,1)
+
+            cosine = COS(theta)
+            sine = SIN(theta)
+
+            ! This sets up the rotation matrix.
+            ROTMATRIX(1,1) = cosine + ROTAXIS(1)**2*(1.0-cosine)
+            ROTMATRIX(1,2) = ROTAXIS(1)*ROTAXIS(2)*(1.0-cosine) - ROTAXIS(3)*sine
+            ROTMATRIX(1,3) = ROTAXIS(1)*ROTAXIS(3)*(1.0-cosine) + ROTAXIS(2)*sine
+
+            ROTMATRIX(2,1) = ROTAXIS(1)*ROTAXIS(2)*(1.0-cosine) + ROTAXIS(3)*sine
+            ROTMATRIX(2,2) = cosine + ROTAXIS(2)**2*(1.0-cosine)
+            ROTMATRIX(2,3) = ROTAXIS(2)*ROTAXIS(3)*(1.0-cosine) - ROTAXIS(1)*sine
+
+            ROTMATRIX(3,1) = ROTAXIS(1)*ROTAXIS(3)*(1.0-cosine) - ROTAXIS(2)*sine
+            ROTMATRIX(3,2) = ROTAXIS(3)*ROTAXIS(2)*(1.0-cosine) + ROTAXIS(1)*sine
+            ROTMATRIX(3,3) = cosine + ROTAXIS(3)**2*(1.0-cosine)
+
+            ! Each Beta is multiplied by the rotation matrix.
+            if (NUMIMP > 1) then
+                one = 1.0
+                zero = 0.0
+
+                do i = 2, NUMIMP
+                    INBETA(:) = NEWBETA(:,i-1)
+                    call DGEMV ('N', 3, 3, one, ROTMATRIX, 3, INBETA, 1, zero, OUTBETA, 1)
+                    NEWBETA(:,i) = OUTBETA(:)
+                enddo
+            endif
+
+        endif
+
+        open (1, file = 'impatoms.dat', action = 'write')
+        do i = 1, NUMIMP
+            j = IMPPTSVAR(4,i)
+            write (1,'(6F15.7, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), REAL(DELTA(j)), &
+            &AIMAG(DELTA(j)), '    ! Impurity No. ', i
+            write (1,'(6F15.7, A, I7)') E0(j), NEWBETA(1,i), NEWBETA(2,i), NEWBETA(3,i), REAL(DELTA(j)), &
+            &AIMAG(DELTA(j)), '    ! Replacement'
+        end do
+        write (1,'(A)') '------------------------------------------------------------'
+        write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,           Re(D),         Im(D)'
+        close(1)
+
+    endsubroutine MAGCHAIN
 
     subroutine HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
         implicit none
