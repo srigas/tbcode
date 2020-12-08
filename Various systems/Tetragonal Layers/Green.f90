@@ -1,7 +1,7 @@
 program GREEN
     implicit none
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, &
-    &NUMIMP, NUMCHEMTYPES, NUME, JATOM, rcheck, MAXNEIGHB, dosorno
+    &NUMIMP, NUMCHEMTYPES, NUME, JATOM, rcheck, MAXNEIGHB, dosorno, spectrumpointer
     integer, allocatable, dimension(:) :: CHEMTYPE, NEIGHBNUM
     integer, allocatable, dimension(:,:) :: IMPPTSVAR, JTYPE
     real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), RPOINT(3), TTPRIME(3),&
@@ -206,11 +206,15 @@ program GREEN
     print *, 'If you only want to study the impurity problem press any other number.'
     read *, dosorno
 
+    print *, 'Press 0 to work in the spectrum defined by the highest and lowest eigenvalue.'
+    print *, 'Press any other number to define other highest and lowest energies.'
+    read *, spectrumpointer
+
     print *, 'Initiating Green functions calculations.'
     if (dosorno == 0) then
-        call FULLGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta)
+        call FULLGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta,spectrumpointer)
     else
-        call PARTIALGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta)
+        call PARTIALGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta,spectrumpointer)
     endif
 
     ! Prepares two config files to be used by the impurity program
@@ -352,20 +356,30 @@ program GREEN
 
     end subroutine FOURIERHAM
 
-    subroutine FULLGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta)
+    subroutine FULLGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,PI,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta,spectrumpointer)
         implicit none
 
         integer :: NUMT, NUMK, NUME, IE, i, j, k, n, NUMIMP, IMPPTSVAR(4,NUMIMP), &
-        &l, m, a, aprime, FTIMO, FTJMO, checker
+        &l, m, a, aprime, FTIMO, FTJMO, checker, spectrumpointer
         real*8 :: PI, EIGENVALUES(4*NUMT,NUMK), energyintervals, eta, greendensityperatom(1+NUMT,NUME+1), &
         &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3),&
-        &greendensity(2,NUME+1), densityperimpurity(1+NUMIMP,NUME+1)
+        &greendensity(2,NUME+1), densityperimpurity(1+NUMIMP,NUME+1), maxe, mine
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT,NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GFK(NUMK,4*NUMT,4*NUMT),&
         &GREENR(4*NUMIMP,4*NUMIMP), FOUREXPONS(NUMK,NUMIMP**2), energies(NUME+1)
         character(len = 1) :: impdosyesorno
 
         ! This part sets up the E points to be used in plots concerning the Green's function
         ! At the moment it simply gives NUME real energies.
+
+        if (spectrumpointer == 0) then
+            mine = MINVAL(EIGENVALUES)
+            maxe = MAXVAL(EIGENVALUES)
+        else
+            print *, 'Please insert the minimum energy.'
+            read *, mine
+            print *, 'Please insert the maximum energy.'
+            read *, maxe
+        endif
 
         print *, 'Should the program calculate the initial DoS for each future impurity site? y/n'
         170 read *, impdosyesorno
@@ -375,11 +389,11 @@ program GREEN
             goto 170
         endif
 
-        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/NUME
+        energyintervals = (maxe - mine)/NUME
 
         ! These are the "complex" energies E
         do i = 1, NUME+1
-            energies(i) = dcmplx(MINVAL(EIGENVALUES) + energyintervals*(i-1), eta)
+            energies(i) = dcmplx(mine + energyintervals*(i-1), eta)
         end do
 
         ! This constructs the exponentials to be used in the Fourier transform
@@ -540,7 +554,7 @@ program GREEN
             ! Writes the Green impurity elements on greenhost.txt
             do i = 1, 4*NUMIMP
                 do j = 1, 4*NUMIMP
-                    write (1, '(F17.8,F17.8)') GREENR(i,j)
+                    write (1, '(F17.8, F17.8)') GREENR(i,j)
                 end do
             end do
 
@@ -555,7 +569,11 @@ program GREEN
         open(1, file = 'greendensityperatom.txt', action = 'write')
         do j = 1, NUME+1 ! Energies = Intervals + 1
             do i = 1, NUMT+1
-                write (1,'(F17.8)',advance='no') greendensityperatom(i,j)
+                if (i == NUMT+1) then
+                    write (1,'(F17.8)',advance='no') greendensityperatom(i,j)
+                else
+                    write (1,'(F17.8, A)',advance='no') greendensityperatom(i,j), ','
+                endif
             end do
             write (1,*)
         end do
@@ -566,7 +584,11 @@ program GREEN
             open(1, file = 'hostdensities.txt', action = 'write')
             do j = 1, NUME+1 ! Energies = Intervals + 1
                 do i = 1, NUMIMP+1
-                    write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                    if (i == NUMIMP+1) then
+                        write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                    else
+                        write (1,'(F17.8, A)',advance='no') densityperimpurity(i,j), ','
+                    endif
                 end do
                 write (1,*)
             end do
@@ -575,25 +597,26 @@ program GREEN
 
         open(1, file = 'energies.dat', action = 'write')
         do i = 1, NUME+1
-            write (1, '(2F17.8)') energies(i)
+            EZ = energies(i)
+            write (1, '(F17.8, A, F17.8)') REAL(EZ), ',', AIMAG(EZ)
         end do
         close(1)
 
         open(1, file = 'greendensity.txt', action = 'write')
         do j = 1, NUME+1 ! Energies = Intervals + 1
-            write (1,'(2F17.8)') greendensity(1,j), greendensity(2,j)
+            write (1,'(F17.8, A, F17.8)') greendensity(1,j), ',', greendensity(2,j)
         end do
         close(1)
 
     end subroutine FULLGREEN
 
-    subroutine PARTIALGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta)
+    subroutine PARTIALGREEN(EIGENVALUES,EIGENVECTORS,NUMT,NUMK,TPTS,a_1,a_2,a_3,KPTS,NUMIMP,IMPPTSVAR,NUME,eta,spectrumpointer)
         implicit none
 
-        integer :: NUMT, NUMK, NUME, IE, i, j, k, n, NUMIMP, IMPPTSVAR(4,NUMIMP), min_val, max_val,&
+        integer :: NUMT, NUMK, NUME, IE, i, j, k, n, NUMIMP, IMPPTSVAR(4,NUMIMP), min_val, max_val, spectrumpointer,&
         &l, m, a, aprime, FTIMO, FTJMO, checker, IMPATOMTYPE(NUMIMP), uniquecounter, NUMATOMS, IATOM, JATOM
         integer, allocatable, dimension(:) :: IMPATOMVALS, UNIQUEIMPATOMS
-        real*8 :: EIGENVALUES(4*NUMT,NUMK), energyintervals, eta, densityperimpurity(1+NUMIMP,NUME+1),&
+        real*8 :: EIGENVALUES(4*NUMT,NUMK), energyintervals, eta, densityperimpurity(1+NUMIMP,NUME+1), mine, maxe,&
         &a_1(3), a_2(3), a_3(3), RPOINT(3), RPRIMEPOINT(3), FOURIERVEC(3), TPTS(3,NUMT), KPTS(3,NUMK), KPOINT(3)
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT,NUMK), GMATRIX(4*NUMT,4*NUMT), EZ, ENFRAC, GFK(NUMK,4*NUMT,4*NUMT),&
         &GREENR(4*NUMIMP,4*NUMIMP), FOUREXPONS(NUMK,NUMIMP**2), energies(NUME+1)
@@ -601,6 +624,16 @@ program GREEN
 
         ! This part sets up the E points to be used in plots concerning the Green's function
         ! At the moment it simply gives NUME real energies.
+
+        if (spectrumpointer == 0) then
+            mine = MINVAL(EIGENVALUES)
+            maxe = MAXVAL(EIGENVALUES)
+        else
+            print *, 'Please insert the minimum energy.'
+            read *, mine
+            print *, 'Please insert the maximum energy.'
+            read *, maxe
+        endif
 
         print *, 'Should the program calculate the initial DoS for each future impurity site? y/n'
         170 read *, impdosyesorno
@@ -610,11 +643,11 @@ program GREEN
             goto 170
         endif
         
-        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/NUME
+        energyintervals = (maxe - mine)/NUME
 
         ! These are the "complex" energies E
         do i = 1, NUME+1
-            energies(i) = dcmplx(MINVAL(EIGENVALUES) + energyintervals*(i-1), eta)
+            energies(i) = dcmplx(mine + energyintervals*(i-1), eta)
         end do
 
         ! Here we catalogue the different atom types, as numbered by their line on the basisvectors.dat file,
@@ -782,7 +815,7 @@ program GREEN
             ! Writes the Green impurity elements on greenhost.txt
             do i = 1, 4*NUMIMP
                 do j = 1, 4*NUMIMP
-                    write (1, '(F17.8,F17.8)') GREENR(i,j)
+                    write (1, '(F17.8, F17.8)') GREENR(i,j)
                 end do
             end do
 
@@ -794,16 +827,21 @@ program GREEN
             open(1, file = 'hostdensities.txt', action = 'write')
             do j = 1, NUME+1 ! Energies = Intervals + 1
                 do i = 1, NUMIMP+1
-                    write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                    if (i == NUMIMP+1) then
+                        write (1,'(F17.8)',advance='no') densityperimpurity(i,j)
+                    else
+                        write (1,'(F17.8, A)',advance='no') densityperimpurity(i,j), ','
+                    endif
                 end do
                 write (1,*)
             end do
             close(1)
         endif
-        
+
         open(1, file = 'energies.dat', action = 'write')
         do i = 1, NUME+1
-            write (1, '(2F17.8)') energies(i)
+            EZ = energies(i)
+            write (1, '(F17.8, A, F17.8)') REAL(EZ), ',', AIMAG(EZ)
         end do
         close(1)
 
