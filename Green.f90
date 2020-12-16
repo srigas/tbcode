@@ -212,7 +212,7 @@ program GREEN
     call IDENTIFIER(vecorints,b_1,b_2,b_3,PI,a_1,a_2,a_3,TPTS,NUMT,NUMIMP,IMPPTSVAR)
 
     if (EBOT == -100.0) then
-        EBOT = MINVAL(EIGENVALUES) ! The - 0.5 factor is inserted to avoid broadening cutoffs
+        EBOT = MINVAL(EIGENVALUES) - 0.5 ! The - 0.5 factor is inserted to avoid broadening cutoffs
     endif
     
     IEMXD = (NPNT1+NPNT2+NPNT3+NPOL)*2 ! In order to setup the EZ and DF arrays
@@ -234,7 +234,7 @@ program GREEN
         print *, 'Should the maximum eigenvalue of the spectrum be used as the maximum energy? y/n'
         175 read *, yesorno
         if (yesorno == 'y') then
-            EMU = MAXVAL(EIGENVALUES) ! The + 0.5 factor is inserted to avoid broadening cutoffs
+            EMU = MAXVAL(EIGENVALUES) + 0.5 ! The + 0.5 factor is inserted to avoid broadening cutoffs
         else if (yesorno == 'n') then
             print *, 'Please enter the maximum energy to be used for the DoS.'
             read *, EMU
@@ -3003,12 +3003,12 @@ program GREEN
             if (NPOL == 0) then
                 DE = (EMU-EBOT)
                 if (NPNT2 > 1) then
-                    DE = DE/NPNT2 ! was NPNT2-1 but changed it to NPNT2 to make it the same with the BdG DoS
+                    DE = DE/(NPNT2-1)
                 else
                     DE = DCMPLX(1.0D0,0.0D0)
                 endif
                 NPNT = 0
-                do I = 1, NPNT2+1 ! was NPNT2 but changed it for the above reason
+                do I = 1, NPNT2
                     NPNT = NPNT + 1
                     ER = EBOT + (I-1)*REAL(DE) ! Before changing it was "ER = EBOT + (I-1)*DE"
                     EZ(NPNT) = DCMPLX(ER,ETK)

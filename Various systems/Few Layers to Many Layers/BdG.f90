@@ -724,26 +724,26 @@ program BDGFEWTOMANY
         real*8 :: PI, lorentzbroad, EIGENVALUES(4*NUMT*NUMK), energyintervals
         complex*16 :: EIGENVECTORS(4*NUMT,4*NUMT*NUMK)
 
-        allocate(numdensityperatom(1+NUMT,NUME+1))
-        allocate(numdensity(2,NUME+1))
+        allocate(numdensityperatom(1+NUMT,NUME))
+        allocate(numdensity(2,NUME))
 
-        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/NUME
+        energyintervals = (MAXVAL(EIGENVALUES) - MINVAL(EIGENVALUES))/(NUME-1)
 
         ! These are the energies E
-        do i = 0, NUME
-            numdensityperatom(1,i+1) = MINVAL(EIGENVALUES) + energyintervals*i
-            numdensity(1,i+1) = MINVAL(EIGENVALUES) + energyintervals*i
-            numdensity(2,i+1) = 0.0
+        do i = 1, NUME
+            numdensityperatom(1,i) = MINVAL(EIGENVALUES) + energyintervals*(i-1)
+            numdensity(1,i) = MINVAL(EIGENVALUES) + energyintervals*(i-1)
+            numdensity(2,i) = 0.0
         end do
 
         ! Calculation of the DoS PER ATOM
         do i = 1, NUMT
             FTIMO = 4*(i-1)
-            do IE = 0, NUME
-                numdensityperatom(1+i,IE+1) = 0.0
+            do IE = 1, NUME
+                numdensityperatom(1+i,IE) = 0.0
                 do j = 1, 4*NUMT*NUMK
-                    numdensityperatom(1+i,IE+1) = numdensityperatom(1+i,IE+1) + (lorentzbroad/pi)*&
-                    &((abs(EIGENVECTORS(i,j))**2 + abs(EIGENVECTORS(i+NUMT,j))**2)/((numdensityperatom(1,IE+1) -&
+                    numdensityperatom(1+i,IE) = numdensityperatom(1+i,IE) + (lorentzbroad/pi)*&
+                    &((abs(EIGENVECTORS(i,j))**2 + abs(EIGENVECTORS(i+NUMT,j))**2)/((numdensityperatom(1,IE) -&
                     &EIGENVALUES(j))**2 + lorentzbroad**2)) ! Sum over all eigenvalues with |u| as weights
                 end do
             end do
@@ -751,14 +751,14 @@ program BDGFEWTOMANY
 
         ! Normalization
         do i = 1, NUMT
-            do j = 1, NUME+1
+            do j = 1, NUME
                 numdensityperatom(i+1,j) = numdensityperatom(i+1,j)/NUMK
             end do
         end do
 
         if (metalorno == 0) then
             open(1, file = 'numdensityperatom.txt', action = 'write')
-            do j = 1, NUME+1
+            do j = 1, NUME
                 do i = 1, NUMT+1
                     write (1,'(F17.8)',advance='no') numdensityperatom(i,j)
                 end do
@@ -772,13 +772,13 @@ program BDGFEWTOMANY
             end do
 
             open(1, file = 'numdensity.txt', action = 'write')
-            do j = 1, NUME+1
+            do j = 1, NUME
                 write (1,'(2F17.8)') numdensity(1,j), numdensity(2,j)
             end do
             close(1)
         else if (metalorno == 1) then ! A simple workaround so that we get different files for metals and SCs
             open(1, file = 'metalnumdensityperatom.txt', action = 'write')
-            do j = 1, NUME+1
+            do j = 1, NUME
                 do i = 1, NUMT+1
                     write (1,'(F17.8)',advance='no') numdensityperatom(i,j)
                 end do
@@ -792,7 +792,7 @@ program BDGFEWTOMANY
             end do
 
             open(1, file = 'metalnumdensity.txt', action = 'write')
-            do j = 1, NUME+1
+            do j = 1, NUME
                 write (1,'(2F17.8)') numdensity(1,j), numdensity(2,j)
             end do
             close(1)
