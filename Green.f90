@@ -2,10 +2,10 @@ program GREEN
     implicit none
     integer :: NUMKX, NUMKY, NUMKZ, NUMK, NUMT, io, i, j, IRLATT, IRLATTMAX, kcounter, LWORK, INFO, NCELLS, &
     &NUMIMP, NUMCHEMTYPES, JATOM, rcheck, MAXNEIGHB, NPNT, NPNT1, NPNT2, NPNT3, &
-    &NPOL, NUMEDOS, ZEROPOL, IEMXD, IEMXDZ
+    &NPOL, NUMEDOS, ZEROPOL, IEMXD, IEMXDZ, FTIMO
     integer, allocatable, dimension(:) :: CHEMTYPE, NEIGHBNUM
     integer, allocatable, dimension(:,:) :: IMPPTSVAR, JTYPE
-    real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), RPOINT(3), TTPRIME(3),&
+    real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), RPOINT(3), TTPRIME(3), ENERGY,&
     &chempot, T, TBROD, PI, KB, b_1(3), b_2(3), b_3(3), etados, lambda, TOL, tempvalre, tempvalim, EBOT, EMU
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, nuzero, magnet, VSUPCOND
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, EIGENVALUES, RLATT, BETA, LHOPS, PREFACTORS, HOPPVALS
@@ -193,6 +193,29 @@ program GREEN
         EIGENVECTORS(:,:,kcounter) = HAMILTONIAN
     end do
 
+    do i = 1, NUMT
+        nu(i) = 0.d0
+        DELTA(i) = (0.d0,0.d0)
+
+        FTIMO = 4*(i-1)
+
+        do kcounter = 1, NUMK
+            do j = 1, 4*NUMT
+
+                ENERGY = EIGENVALUES(j,kcounter)
+
+                nu(i) = nu(i) + FERMI(ENERGY,T,KB)*abs(EIGENVECTORS(i,j,kcounter))**2 +&
+                & FERMI(ENERGY,T,KB)*abs(EIGENVECTORS(i+NUMT,j,kcounter))**2
+
+                DELTA(i) = DELTA(i) -FERMI(ENERGY,T,KB)*VSUPCOND(i)*&
+                &EIGENVECTORS(i,j,kcounter)*CONJG(EIGENVECTORS(i+3*NUMT,j,kcounter))
+            end do
+        end do
+
+        nu(i) = nu(i)/NUMK
+        DELTA(i) = DELTA(i)/NUMK
+    end do
+
     print *, 'Diagonalization finished and eigenvectors/eigenvalues stored.'
 
     print *, 'We proceed with the setup of the energies to be used for the calculation of G.'
@@ -298,33 +321,38 @@ program GREEN
         write (1,*) NUMIMP, '! Number of impurities.'
         write (1,*) NPNT, '! Number of energy values.'
         write (1,*) NUMEDOS, '! Number of energy values for the DoS.'
+        do i = 1, NUMIMP
+            j = IMPPTSVAR(4,i)
+            write (1,'(3F15.9, A, I7)') nu(j), REAL(DELTA(j)), AIMAG(DELTA(j)), ' ! n and D for atom No. ', i
+        end do
     close(1)
 
     if (magorno == 'n') then
         open (1, file = 'impatoms.dat', action = 'write')
         do i = 1, NUMIMP
             j = IMPPTSVAR(4,i)
-            write (1,'(6F15.7, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), REAL(DELTA(j)), &
-            &AIMAG(DELTA(j)), '    ! Impurity No. ', i
-            write (1,*)
+            write (1,'(7F15.9, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), VSUPCOND(j), ULCN(j), nuzero(j),&
+            & '    ! Host No. ', i
+            write (1,'(7F15.9, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), VSUPCOND(j), ULCN(j), nuzero(j),&
+            & '    ! Impurity No. ', i
         end do
-        write (1,'(A)') '------------------------------------------------------------'
-        write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,           Re(D),         Im(D)'
-        write (1,'(A)') 'Please insert the corresponding impurity value under each element.'
+        write (1,'(A)') '---------------------------------------------------------------------------------------&
+        &-------------------'
+        write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,            V,&
+        &             U,            n_0'
         close(1)
     else
-        call MAGCHAIN(NUMT,NUMIMP,PI,E0,BETA,DELTA,IMPPTSVAR)
+        call MAGCHAIN(NUMT,NUMIMP,PI,E0,BETA,VSUPCOND,ULCN,nuzero,IMPPTSVAR)
     endif
 
     contains
 
-    subroutine MAGCHAIN(NUMT,NUMIMP,PI,E0,BETA,DELTA,IMPPTSVAR)
+    subroutine MAGCHAIN(NUMT,NUMIMP,PI,E0,BETA,VSUPCOND,ULCN,nuzero,IMPPTSVAR)
         implicit none
 
         integer :: NUMT, NUMIMP, num, denom, i, IMPPTSVAR(4,NUMIMP)
         real*8 :: ROTAXIS(3), theta, E0(NUMT), BETA(3,NUMT), NEWBETA(3,NUMIMP), PI, magB, initheta, TOL, &
-        &ROTMATRIX(3,3), INBETA(3), OUTBETA(3), one, zero, sine, cosine
-        complex*16 :: DELTA(NUMT)
+        &ROTMATRIX(3,3), INBETA(3), OUTBETA(3), one, zero, sine, cosine, ULCN(NUMT), nuzero(NUMT), VSUPCOND(NUMT)
 
         TOL = 0.000001 ! The tolerance for the "if" checks.
 
@@ -452,13 +480,15 @@ program GREEN
         open (1, file = 'impatoms.dat', action = 'write')
         do i = 1, NUMIMP
             j = IMPPTSVAR(4,i)
-            write (1,'(6F15.7, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), REAL(DELTA(j)), &
-            &AIMAG(DELTA(j)), '    ! Impurity No. ', i
-            write (1,'(6F15.7, A, I7)') E0(j), NEWBETA(1,i), NEWBETA(2,i), NEWBETA(3,i), REAL(DELTA(j)), &
-            &AIMAG(DELTA(j)), '    ! Replacement'
+            write (1,'(7F15.9, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), VSUPCOND(j), ULCN(j), nuzero(j),&
+            &'    ! Host No. ', i
+            write (1,'(7F15.9, A, I7)') E0(j), NEWBETA(1,i), NEWBETA(2,i), NEWBETA(3,i), VSUPCOND(j), ULCN(j), nuzero(j),&
+            &'    ! Host No. ', i
         end do
-        write (1,'(A)') '------------------------------------------------------------'
-        write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,           Re(D),         Im(D)'
+        write (1,'(A)') '---------------------------------------------------------------------------------------&
+        &-------------------'
+        write (1,'(A)') 'Format: E_0,           B_x,           B_y,           B_z,            V,&
+        &             U,            n_0'
         close(1)
 
     endsubroutine MAGCHAIN
@@ -3272,6 +3302,35 @@ program GREEN
         KB = 1.0 ! The value in eVs is 8.617385D-5
 
     end subroutine CONSTANTS
+
+    function FERMI(E,T,KB) result(fE)
+        implicit none
+        
+        real*8, intent(in) :: E, T
+        real*8 :: fE, KB, term
+
+        if (T == 0.0) then
+            if (E < 0.0) then
+                fE = 1.0
+            else if (E == 0.0) then
+                fE = 0.5
+            else
+                fE = 0.0
+            endif
+        else
+            term = E/(KB*T)
+            ! 460.0 is a check to see if this exponential is
+            ! 200ln(10), i.e. so large that fortran can't process it, since the limit is ~300ln(10)
+            if (term > 460.0) then
+                fE = 0.0
+            else if (term < -460.0) then
+                fE = 1.0
+            else
+                fE = 1.0/(exp(term)+1.0)
+            endif
+        endif
+		
+    end function FERMI
 
     function CROSS_PRODUCT(x,y) result(cross)
         implicit none

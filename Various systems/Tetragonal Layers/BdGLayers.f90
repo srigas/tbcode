@@ -416,12 +416,12 @@ program BDGLAYERS
     write (1,'(A)') '------------------------------------------------------------'
     write (1,'(A)') 'Format: Layer index, Density, Magnetization, Real part of D, Imag part of D'
     close(1)
-    444 format(I7, A, 1F15.7, A, 1F15.7, A, 1F15.7, A, 1F15.7)
+    444 format(I7, A, 1F15.9, A, 1F15.9, A, 1F15.9, A, 1F15.9)
 
     open (1, file = 'scresults.dat', action = 'write')
     write (1, *) newchempot
     do i = 1, NUMT
-        write (1,'(4F15.7)') newnu(i), magnet(i), REAL(newDELTA(i)), AIMAG(newDELTA(i))
+        write (1,'(4F15.9)') newnu(i), magnet(i), REAL(newDELTA(i)), AIMAG(newDELTA(i))
     end do
     close(1)
 

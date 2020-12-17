@@ -4,12 +4,13 @@ program BDG_IMP
     integer :: i, j, NUME, NUMIMP, IE, INFO, FTIMO, NUMEDOS, NPNT
     integer, allocatable, dimension(:) :: IPIV
     real*8 :: PI, KB, tempval1, tempval2
-    real*8, allocatable, dimension(:) :: E0, E0IMP
+    real*8, allocatable, dimension(:) :: E0, E0IMP, nuzero, nuzeroIMP, ULCN, ULCNIMP, NEWNU, VSUPCOND, &
+    &VSUPCONDIMP, NU
     real*8, allocatable, dimension(:,:) :: BETA, BETAIMP, densityperimpurity
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), ONE, MINUSONE, posham(2,2), EZ
-    complex*16, allocatable, dimension(:) :: DELTA, DELTAIMP, energies, WEIGHTS, EZDOS
+    complex*16, allocatable, dimension(:) :: DELTA, energies, WEIGHTS, EZDOS, NEWDELTA
     complex*16, allocatable, dimension(:,:) :: GREEN, HAMIMP, IDENTITY
-    character(len = 1) :: dosorno
+    character(len = 1) :: selfconfin, finaldosorno
 
     print *, 'Initiating the impurity problem calculations.'
 
@@ -24,34 +25,49 @@ program BDG_IMP
 
     allocate(E0(NUMIMP))
     allocate(E0IMP(NUMIMP))
+    allocate(ULCN(NUMIMP))
+    allocate(ULCNIMP(NUMIMP))
     allocate(BETA(3,NUMIMP))
     allocate(BETAIMP(3,NUMIMP))
-    allocate(DELTA(NUMIMP))
-    allocate(DELTAIMP(NUMIMP))
+    allocate(VSUPCOND(NUMIMP))
+    allocate(VSUPCONDIMP(NUMIMP))
+    allocate(nuzero(NUMIMP))
+    allocate(nuzeroIMP(NUMIMP))
+
     allocate(GREEN(4*NUMIMP,4*NUMIMP))
     allocate(HAMIMP(4*NUMIMP,4*NUMIMP))
     allocate(IDENTITY(4*NUMIMP,4*NUMIMP))
+    
+    allocate(NU(NUMIMP))
+    allocate(DELTA(NUMIMP))
+    allocate(NEWNU(NUMIMP))
+    allocate(NEWDELTA(NUMIMP))
 
     allocate(energies(NUME))
     allocate(EZDOS(NUMEDOS))
     allocate(WEIGHTS(NUME))
     allocate(densityperimpurity(1+NUMIMP,NUMEDOS))
 
+    open(1, file = 'impconfig.dat', action = 'read')
+    read(1,*)
+    read(1,*)
+    read(1,*)
+    do i = 1, NUMIMP
+        read(1,*) NU(i), tempval1, tempval2
+        DELTA(i) = dcmplx(tempval1,tempval2)
+    end do
+    close(1)
+
     allocate(IPIV(4*NUMIMP))
 
-    print *, 'Should the impurity routine run a DoS as well? y/n'
-    10 read *, dosorno
-    if (dosorno /= 'y' .and. dosorno /= 'n') then
-        print *, 'Invalid input, please enter y or n.'
-        goto 10
-    else if (dosorno == 'y') then
-        open(1, file = 'energiesfordos.dat', action = 'read')
-        do i = 1, NUMEDOS
-            read(1,*) tempval1, tempval2
-            EZDOS(i) = dcmplx(tempval1, tempval2)
-        end do
-        close(1)
-    endif
+    finaldosorno = 'n' ! Starting value
+
+    open(1, file = 'energiesfordos.dat', action = 'read')
+    do i = 1, NUMEDOS
+        read(1,*) tempval1, tempval2
+        EZDOS(i) = dcmplx(tempval1, tempval2)
+    end do
+    close(1)
 
     open(1, file = 'energies.dat', action = 'read')
     do i = 1, NUME
@@ -69,27 +85,28 @@ program BDG_IMP
 
     open(1, file = 'impatoms.dat', action = 'read')
     do i = 1, NUMIMP
-        read (1,*) E0(i), BETA(1,i), BETA(2,i), BETA(3,i), tempval1, tempval2
-        DELTA(i) = dcmplx(tempval1, tempval2)
-        read (1,*) E0IMP(i), BETAIMP(1,i), BETAIMP(2,i), BETAIMP(3,i), tempval1, tempval2
-        DELTAIMP(i) = dcmplx(tempval1, tempval2)
+        read (1,*) E0(i), BETA(1,i), BETA(2,i), BETA(3,i), VSUPCOND(i), ULCN(i), nuzero(i)
+        read (1,*) E0IMP(i), BETAIMP(1,i), BETAIMP(2,i), BETAIMP(3,i), VSUPCONDIMP(i), ULCNIMP(i), nuzeroIMP(i)
     end do
     close(1)
 
     HAMIMP(:,:) = (0.d0,0.d0)
 
+    NEWNU = NU ! Initial values
+    NEWDELTA = DELTA ! Initial values
+
     ! Constructs the ΔH matrix
-    do i = 1, NUMIMP
+    180 do i = 1, NUMIMP
 
         FTIMO = 4*(i-1)
 
-        posham = (E0IMP(i) - E0(i))*IdentityPauli - (BETAIMP(1,i)-BETA(1,i))*xPauli - (BETAIMP(2,i)-BETA(2,i))*yPauli -&
-        & (BETAIMP(3,i)-BETA(3,i))*zPauli
+        posham = (E0IMP(i) - E0(i) + ULCNIMP(i)*(NEWNU(i) - nuzeroIMP(i)) - ULCN(i)*(NU(i) - nuzero(i)))*IdentityPauli -&
+        & (BETAIMP(1,i)-BETA(1,i))*xPauli - (BETAIMP(2,i)-BETA(2,i))*yPauli - (BETAIMP(3,i)-BETA(3,i))*zPauli
 
         HAMIMP(1 + FTIMO,1 + FTIMO) = posham(1,1)
         HAMIMP(1 + FTIMO,2 + FTIMO) = posham(1,2)
         !HAMIMP(1 + FTIMO,3 + FTIMO) = 0.0
-        HAMIMP(1 + FTIMO,4 + FTIMO) = DELTAIMP(i) - DELTA(i)
+        HAMIMP(1 + FTIMO,4 + FTIMO) = NEWDELTA(i) - DELTA(i)
 
         HAMIMP(2 + FTIMO,1 + FTIMO) = posham(2,1)
         HAMIMP(2 + FTIMO,2 + FTIMO) = posham(2,2)
@@ -108,25 +125,26 @@ program BDG_IMP
 
     end do
 
-    170 if (dosorno == 'y') then
+    if (finaldosorno == 'y') then
         print *, 'Commencing the DoS calculation.'
         NPNT = NUMEDOS
     else 
         print *, 'Commencing the calculation of G_imp for each energy value.'
         NPNT = NUME
+        NEWNU = 0.d0
+        NEWDELTA = (0.d0,0.d0)
     endif
 
     ! This commences the calculation of the impurity Green's function for each energy E
     do IE = 1, NPNT
 
-        if (dosorno == 'y') then
+        if (finaldosorno == 'y') then
             EZ = EZDOS(IE)
 
             densityperimpurity(1,IE) = REAL(EZ)
             do i = 1, NUMIMP
                 densityperimpurity(1+i,IE) = 0.0
             end do
-
         else
             EZ = energies(IE)
         endif
@@ -138,7 +156,7 @@ program BDG_IMP
         end do
     
         ! This reads the G_0 matrix from the output greenimp.txt of BdG.f90 for each energy E
-        if (dosorno == 'y') then
+        if (finaldosorno == 'y') then
             open(1, file = 'greenhostfordos.txt', action = 'read')
         else
             open(1, file = 'greenhost.txt', action = 'read')
@@ -174,7 +192,7 @@ program BDG_IMP
         call ZGETRF (4*NUMIMP, 4*NUMIMP, IDENTITY, 4*NUMIMP, IPIV, INFO)
         call ZGETRS ('N', 4*NUMIMP, 4*NUMIMP, IDENTITY, 4*NUMIMP, IPIV, GREEN, 4*NUMIMP, INFO)
 
-        if (dosorno == 'y') then
+        if (finaldosorno == 'y') then
             do i = 1, NUMIMP ! Calculation of density for each atom
                 FTIMO = 4*(i-1)
                 do j = 1, 2 ! n = u↑u↑* + u↓u↓*
@@ -220,12 +238,35 @@ program BDG_IMP
                 end do
             endif
             close(1)
+
+            NEWNU = 0.d0
+            NEWDELTA = (0.d0,0.d0)
+            ! Calculation of the new charges and Deltas
+            do i = 1, NUMIMP
+
+                FTIMO = 4*(i-1)
+
+                NEWNU(i) = NEWNU(i) - (1.0/PI)*AIMAG(WEIGHTS(IE)*(GREEN(1 + FTIMO, 1 + FTIMO) +&
+                & GREEN(2 + FTIMO, 2 + FTIMO)))
+
+                NEWDELTA(i) = NEWDELTA(i) + (1.0/PI)*VSUPCONDIMP(i)*AIMAG(WEIGHTS(IE)*GREEN(1 + FTIMO, 4 + FTIMO))
+
+            end do
+
         endif
 
     end do
 
-    if (dosorno == 'y') then
+    if (finaldosorno /= 'y') then
+        print *, 'G_imp calculated.'
+        print *, '==========================='
+        do i = 1, NUMIMP
+            print *, 'Charge for atom No. ', i, '= ', NEWNU(i)
+            print *, 'Delta for atom No. ', i, '= ', NEWDELTA(i)
+        end do
+    endif
 
+    if (finaldosorno == 'y') then
         open(1, file = 'impdensities.txt', action = 'write')
             do j = 1, NUMEDOS
                 do i = 1, NUMIMP+1
@@ -240,11 +281,26 @@ program BDG_IMP
         close(1)
 
         print *, 'DoS for impurities finished.'
-        print *, 'Proceeding to calculate the Green function for the other operations.'
-        dosorno = 'n'
-        goto 170
-    else
-        print *, 'G_imp calculated.'
+    endif
+
+    ! Here an if check should be inserted so that we go back and re-build the Hamiltonian using
+    ! the new charges and Deltas. This is the self-consistency for the impurity problem.
+
+    ! If the self-consistency needs to continue, we go back to 180 and reset the Hamiltonian
+    ! using the NEWDELTA and NEWNU calculated above.
+    ! goto 180
+
+    ! If the self-consistency criterion is met, then the selfconfin switch is turned to 'y'
+    selfconfin = 'y'
+    if (finaldosorno /= 'y') then
+        print *, 'Should a DoS be performed for the converged impurity system? y/n'
+        20 read *, finaldosorno
+        if (finaldosorno /= 'y' .and. finaldosorno /= 'n') then
+            print *, 'Invalid input, please enter y or n.'
+            goto 20
+        else if (finaldosorno == 'y') then
+            goto 180
+        endif
     endif
 
     contains
