@@ -62,13 +62,6 @@ program BDG_IMP
 
     finaldosorno = 'n' ! Starting value
 
-    open(1, file = 'energiesfordos.dat', action = 'read')
-    do i = 1, NUMEDOS
-        read(1,*) tempval1, tempval2
-        EZDOS(i) = dcmplx(tempval1, tempval2)
-    end do
-    close(1)
-
     open(1, file = 'energies.dat', action = 'read')
     do i = 1, NUME
         read(1,*) tempval1, tempval2
@@ -90,13 +83,13 @@ program BDG_IMP
     end do
     close(1)
 
-    HAMIMP(:,:) = (0.d0,0.d0)
-
     NEWNU = NU ! Initial values
     NEWDELTA = DELTA ! Initial values
 
+    180 HAMIMP(:,:) = (0.d0,0.d0)
+
     ! Constructs the ΔH matrix
-    180 do i = 1, NUMIMP
+    do i = 1, NUMIMP
 
         FTIMO = 4*(i-1)
 
@@ -239,8 +232,6 @@ program BDG_IMP
             endif
             close(1)
 
-            NEWNU = 0.d0
-            NEWDELTA = (0.d0,0.d0)
             ! Calculation of the new charges and Deltas
             do i = 1, NUMIMP
 
@@ -299,7 +290,16 @@ program BDG_IMP
             print *, 'Invalid input, please enter y or n.'
             goto 20
         else if (finaldosorno == 'y') then
+
+            open(1, file = 'energiesfordos.dat', action = 'read')
+            do i = 1, NUMEDOS
+                read(1,*) tempval1, tempval2
+                EZDOS(i) = dcmplx(tempval1, tempval2)
+            end do
+            close(1)
+
             goto 180
+            
         endif
     endif
 
