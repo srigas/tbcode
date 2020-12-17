@@ -9,7 +9,7 @@
 0.01 ! Temperature
 0.0 ! Initial Chempot value
 0.35 ! Initial guess for the charges
-(0.007,0.0) ! Initial value for Delta
+(0.3,0.0) ! Initial value for Delta
 0.1 ! Mixing factor for charges
 0.1 ! Mixing factor for Delta
 300 ! Points for DoS
