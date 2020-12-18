@@ -1,9 +1,11 @@
-5 	! NPOL - The number of poles of the fermi function. For the DoS option there is an in-program choice.
-y 	! dosorno - In the case that NPOL =/= 0, there is an option to also calculate the DoS. y/n
-10 	! NPNT1 - The number of points for the contour's upwards line
-50 	! NPNT2 - The number of points for the contour's horizontal line
-10 	! NPNT3 - The number of points for the contour's downwards line
--100.0 	! EBOT - Minimum energy. To use the lowest eigenvalue enter -100.0
-v 	! vecorints - Enter v to input impurity sites by vectors or i to imput impurity sites by integers.
-part 	! fullorp - Enter full to get the green function's elements for all atoms, or part to get the green function's elements only for the impurity sites.
-n 	! magorno - Enter y to prepare the magnetic chain inputs, or n to ignore.
+5 		! NPOL - The number of poles of the fermi function. For the DoS option there is an in-program choice.
+y 		! dosorno - In the case that NPOL =/= 0, there is an option to also calculate the DoS. y/n
+10 		! NPNT1 - The number of points for the contour's upwards line
+50 		! NPNT2 - The number of points for the contour's horizontal line
+10 		! NPNT3 - The number of points for the contour's downwards line
+-100.0 		! EBOT - Minimum energy. To use the lowest eigenvalue enter -100.0
+v 		! vecorints - Enter v to input impurity sites by vectors or i to imput impurity sites by integers.
+part 		! fullorp - Enter full to get the green function's elements for all atoms, or part to get the green function's elements only for the impurity sites.
+y 		! magorno - Enter y to prepare the magnetic chain inputs, or n to ignore.
+0.0,0.0,1.0 	! ROTAXIS - The axis around which the chain's moments rotate
+2,3		! a,b - The angle rotation is given as a*PI/b

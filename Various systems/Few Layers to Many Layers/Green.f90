@@ -5,7 +5,7 @@ program GREEN
     &NPOL, NUMEDOS, ZEROPOL, IEMXD, IEMXDZ, FTIMO
     integer, allocatable, dimension(:) :: CHEMTYPE, NEIGHBNUM
     integer, allocatable, dimension(:,:) :: IMPPTSVAR, JTYPE
-    real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), RPOINT(3), TTPRIME(3), ENERGY,&
+    real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), RPOINT(3), TTPRIME(3), ENERGY, EMIN,&
     &chempot, T, TBROD, PI, KB, b_1(3), b_2(3), b_3(3), etados, lambda, TOL, tempvalre, tempvalim, EBOT, EMU
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, nuzero, magnet, VSUPCOND
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, EIGENVALUES, RLATT, BETA, LHOPS, PREFACTORS, HOPPVALS
@@ -254,8 +254,19 @@ program GREEN
         allocate(EZDOS(IEMXDZ))
 
         print *, 'It appears that you want to perform a DoS calculation apart from the other calculations.'
+        print *, 'Should the minimum energy for the DoS be the same as EBOT ? y/n'
+        171 read *, yesorno
+        if (yesorno == 'y') then
+            EMIN = EBOT
+        else if (yesorno == 'n') then
+            print *, 'Please enter the minimum energy to be used for the DoS.'
+            read *, EMIN
+        else
+            print *, 'Invalid input. Please enter y or n.'
+            goto 171
+        endif
         print *, 'Should the maximum eigenvalue of the spectrum be used as the maximum energy? y/n'
-        175 read *, yesorno
+        172 read *, yesorno
         if (yesorno == 'y') then
             EMU = MAXVAL(EIGENVALUES) + 0.5 ! The + 0.5 factor is inserted to avoid broadening cutoffs
         else if (yesorno == 'n') then
@@ -263,10 +274,10 @@ program GREEN
             read *, EMU
         else
             print *, 'Invalid input. Please enter y or n.'
-            goto 175
+            goto 172
         endif
 
-        call EMESHT(EZDOS,DFDOS,NPNT,EBOT,EMU,TBROD,ZEROPOL,NPNT1,NUMEDOS,NPNT3,PI,KB,IEMXDZ)
+        call EMESHT(EZDOS,DFDOS,NPNT,EMIN,EMU,TBROD,ZEROPOL,NPNT1,NUMEDOS,NPNT3,PI,KB,IEMXDZ)
 
         NUMEDOS = NPNT ! To be written later on the file impconfig.dat
 
@@ -351,22 +362,20 @@ program GREEN
         implicit none
 
         integer :: NUMT, NUMIMP, num, denom, i, IMPPTSVAR(4,NUMIMP)
-        real*8 :: ROTAXIS(3), theta, E0(NUMT), BETA(3,NUMT), NEWBETA(3,NUMIMP), PI, magB, initheta, TOL, &
+        real*8 :: ROTAXIS(3), theta, E0(NUMT), BETA(3,NUMT), NEWBETA(3,NUMIMP), PI, magB, initheta, TOL, VSUPCONDIMP(NUMT),&
         &ROTMATRIX(3,3), INBETA(3), OUTBETA(3), one, zero, sine, cosine, ULCN(NUMT), nuzero(NUMT), VSUPCOND(NUMT)
 
         TOL = 0.000001 ! The tolerance for the "if" checks.
 
         print *, 'Preparing the magnetic chain inputs.'
 
-        print *, 'Please enter the coordinates of the unit vector around which the magnetic field rotates.'
-        print *, 'Example, for a rotation around the x-axis enter 1.0,0.0,0.0.'
-        read*, ROTAXIS
-
-        print *, 'The effective magnetic field rotates across the chain by a constant angle a*PI/b.'
-        print *, 'Please insert a (integer).'
-        read *, num
-        print *, 'Please insert b (integer).'
-        read *, denom
+        open(1, file = 'greenconfig.dat', action = 'read')
+            do i = 1, 9
+                read(1,*)
+            end do ! Skips the file's first 9 lines
+            read(1,*) ROTAXIS
+            read(1,*) num, denom
+        close(1)
 
         theta = (num*PI)/denom
 
@@ -480,10 +489,11 @@ program GREEN
         open (1, file = 'impatoms.dat', action = 'write')
         do i = 1, NUMIMP
             j = IMPPTSVAR(4,i)
+            VSUPCONDIMP(j) = 0.0
             write (1,'(7F15.9, A, I7)') E0(j), BETA(1,j), BETA(2,j), BETA(3,j), VSUPCOND(j), ULCN(j), nuzero(j),&
             &'    ! Host No. ', i
-            write (1,'(7F15.9, A, I7)') E0(j), NEWBETA(1,i), NEWBETA(2,i), NEWBETA(3,i), VSUPCOND(j), ULCN(j), nuzero(j),&
-            &'    ! Host No. ', i
+            write (1,'(7F15.9, A, I7)') E0(j), NEWBETA(1,i), NEWBETA(2,i), NEWBETA(3,i), VSUPCONDIMP(j), ULCN(j), nuzero(j),&
+            &'    ! Impurity No. ', i
         end do
         write (1,'(A)') '---------------------------------------------------------------------------------------&
         &-------------------'
