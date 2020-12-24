@@ -5,7 +5,7 @@ y 		! dosorno - In the case that NPOL =/= 0, there is an option to also calculat
 10 		! NPNT3 - The number of points for the contour's downwards line
 -100.0 		! EBOT - Minimum energy. To use the lowest eigenvalue enter -100.0
 v 		! vecorints - Enter v to input impurity sites by vectors or i to imput impurity sites by integers.
-part 		! fullorp - Enter full to get the green function's elements for all atoms, or part to get the green function's elements only for the impurity sites.
+part 		! full: G(E) for all atoms, part: G(E) only for the impurity sites
 y 		! magorno - Enter y to prepare the magnetic chain inputs, or n to ignore.
-0.0,0.0,1.0 	! ROTAXIS - The axis around which the chain's moments rotate
+0.0,1.0,0.0 	! ROTAXIS - The axis around which the chain's moments rotate
 2,3		! a,b - The angle rotation is given as a*PI/b

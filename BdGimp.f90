@@ -10,7 +10,7 @@ program BDG_IMP
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), ONE, MINUSONE, posham(2,2), EZ
     complex*16, allocatable, dimension(:) :: DELTA, energies, WEIGHTS, EZDOS, NEWDELTA
     complex*16, allocatable, dimension(:,:) :: GREEN, HAMIMP, IDENTITY
-    character(len = 1) :: selfconfin, finaldosorno
+    character(len = 1) :: selfconfin, finaldosorno, printgimp
 
     print *, 'Initiating the impurity problem calculations.'
 
@@ -21,6 +21,7 @@ program BDG_IMP
     read(1,*) NUMIMP
     read(1,*) NUME
     read(1,*) NUMEDOS
+    read(1,*) printgimp
     close(1)
 
     allocate(E0(NUMIMP))
@@ -121,11 +122,19 @@ program BDG_IMP
     if (finaldosorno == 'y') then
         print *, 'Commencing the DoS calculation.'
         NPNT = NUMEDOS
+        open(5, file = 'greenhostfordos.txt', action = 'read')
+        if (printgimp == 'y') then
+            open(6, file = 'greenimpfordos.txt', action = 'write')
+        endif
     else 
         print *, 'Commencing the calculation of G_imp for each energy value.'
         NPNT = NUME
         NEWNU = 0.d0
         NEWDELTA = (0.d0,0.d0)
+        open(5, file = 'greenhost.txt', action = 'read')
+        if (printgimp == 'y') then
+            open(6, file = 'greenimp.txt', action = 'write')
+        endif
     endif
 
     ! This commences the calculation of the impurity Green's function for each energy E
@@ -147,33 +156,14 @@ program BDG_IMP
         do i = 1, 4*NUMIMP
             IDENTITY(i,i) = (1.0,0.0)
         end do
-    
-        ! This reads the G_0 matrix from the output greenimp.txt of BdG.f90 for each energy E
-        if (finaldosorno == 'y') then
-            open(1, file = 'greenhostfordos.txt', action = 'read')
-        else
-            open(1, file = 'greenhost.txt', action = 'read')
-        endif
 
-        if (IE /= 1) then
-            do i = 1, (IE-1)*(4*NUMIMP)**2 ! Skips the proper number of lines
-                read (1,*)
+        ! This reads the G_0 matrix from the output greenimp.txt of BdG.f90 for each energy E
+        do i = 1, 4*NUMIMP
+            do j = 1, 4*NUMIMP
+                read(5,*) tempval1, tempval2
+                GREEN(i,j) = dcmplx(tempval1, tempval2)
             end do
-            do i = 1, 4*NUMIMP
-                do j = 1, 4*NUMIMP
-                    read(1,*) tempval1, tempval2
-                    GREEN(i,j) = dcmplx(tempval1, tempval2)
-                end do  
-            end do
-        else
-            do i = 1, 4*NUMIMP
-                do j = 1, 4*NUMIMP
-                    read(1,*) tempval1, tempval2
-                    GREEN(i,j) = dcmplx(tempval1, tempval2)
-                end do  
-            end do
-        endif
-        close(1)
+        end do
 
         ! This routine returns the IDENTITY matrix as the the (I - G_0*ΔH) matrix
         ONE = (1.0,0.0)
@@ -185,6 +175,15 @@ program BDG_IMP
         call ZGETRF (4*NUMIMP, 4*NUMIMP, IDENTITY, 4*NUMIMP, IPIV, INFO)
         call ZGETRS ('N', 4*NUMIMP, 4*NUMIMP, IDENTITY, 4*NUMIMP, IPIV, GREEN, 4*NUMIMP, INFO)
 
+        ! Writes the new G elements in the corresponding file
+        if (printgimp == 'y') then
+            do i = 1, 4*NUMIMP
+                do j = 1, 4*NUMIMP
+                    write (6,'(F17.8,F17.8)') GREEN(i,j)
+                end do  
+            end do
+        endif
+
         if (finaldosorno == 'y') then
             do i = 1, NUMIMP ! Calculation of density for each atom
                 FTIMO = 4*(i-1)
@@ -193,45 +192,7 @@ program BDG_IMP
                     &(1.0/PI)*AIMAG(GREEN(j + FTIMO, j + FTIMO))
                 end do
             end do
-
-            open(1, file = 'greenimpfordos.txt', action = 'readwrite')
-            if (IE /= 1) then
-                do i = 1, (IE-1)*(4*NUMIMP)**2 ! Skips the proper number of lines
-                    read (1,*)
-                end do
-                do i = 1, 4*NUMIMP
-                    do j = 1, 4*NUMIMP
-                        write (1,'(F17.8,F17.8)') GREEN(i,j)
-                    end do  
-                end do
-            else
-                do i = 1, 4*NUMIMP
-                    do j = 1, 4*NUMIMP
-                        write (1,'(F17.8,F17.8)') GREEN(i,j)
-                    end do  
-                end do
-            endif
-            close(1)
         else
-            open(1, file = 'greenimp.txt', action = 'readwrite')
-            if (IE /= 1) then
-                do i = 1, (IE-1)*(4*NUMIMP)**2 ! Skips the proper number of lines
-                    read (1,*)
-                end do
-                do i = 1, 4*NUMIMP
-                    do j = 1, 4*NUMIMP
-                        write (1,'(F17.8,F17.8)') GREEN(i,j)
-                    end do  
-                end do
-            else
-                do i = 1, 4*NUMIMP
-                    do j = 1, 4*NUMIMP
-                        write (1,'(F17.8,F17.8)') GREEN(i,j)
-                    end do  
-                end do
-            endif
-            close(1)
-
             ! Calculation of the new charges and Deltas
             do i = 1, NUMIMP
 
@@ -240,13 +201,14 @@ program BDG_IMP
                 NEWNU(i) = NEWNU(i) - (1.0/PI)*AIMAG(WEIGHTS(IE)*(GREEN(1 + FTIMO, 1 + FTIMO) +&
                 & GREEN(2 + FTIMO, 2 + FTIMO)))
 
-                NEWDELTA(i) = NEWDELTA(i) + (1.0/PI)*VSUPCONDIMP(i)*AIMAG(WEIGHTS(IE)*GREEN(1 + FTIMO, 4 + FTIMO))
-
+                NEWDELTA(i) = NEWDELTA(i) + (1.0/PI)*VSUPCONDIMP(i)*AIMAG(WEIGHTS(IE)*GREEN(2 + FTIMO, 3 + FTIMO))
             end do
-
         endif
 
     end do
+
+    close(5)
+    close(6)
 
     if (finaldosorno /= 'y') then
         print *, 'G_imp calculated.'
@@ -279,7 +241,12 @@ program BDG_IMP
 
     ! If the self-consistency needs to continue, we go back to 180 and reset the Hamiltonian
     ! using the NEWDELTA and NEWNU calculated above.
-    ! goto 180
+
+    ! Number of iterations
+    !if (NUMIT < MAXNUMIT) then  
+    !    NUMIT = NUMIT + 1
+    !    goto 180
+    !endif
 
     ! If the self-consistency criterion is met, then the selfconfin switch is turned to 'y'
     selfconfin = 'y'

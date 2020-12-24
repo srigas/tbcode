@@ -332,6 +332,7 @@ program GREEN
         write (1,*) NUMIMP, '! Number of impurities.'
         write (1,*) NPNT, '! Number of energy values.'
         write (1,*) NUMEDOS, '! Number of energy values for the DoS.'
+        write (1,*) '       n ! y to print G_imp elements on a file and n to ignore.'
         do i = 1, NUMIMP
             j = IMPPTSVAR(4,i)
             write (1,'(3F15.9, A, I7)') nu(j), REAL(DELTA(j)), AIMAG(DELTA(j)), ' ! n and D for atom No. ', i
