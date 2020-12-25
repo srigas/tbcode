@@ -53,6 +53,7 @@ program BDG_IMP
     read(1,*)
     read(1,*)
     read(1,*)
+    read(1,*)
     do i = 1, NUMIMP
         read(1,*) NU(i), tempval1, tempval2
         DELTA(i) = dcmplx(tempval1,tempval2)
