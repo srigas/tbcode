@@ -38,6 +38,8 @@ program GREEN
     read(1,*) ! mixfactorD
     read(1,*) NUMEDOS
     read(1,*) etados
+    read(1,*) ! metalepsilon
+    read(1,*) ! scepsilon
     close(1)
 
     ! This is because the lattice vectors are inserted through Bravais coordinates
@@ -332,7 +334,8 @@ program GREEN
         write (1,*) NUMIMP, '! Number of impurities.'
         write (1,*) NPNT, '! Number of energy values.'
         write (1,*) NUMEDOS, '! Number of energy values for the DoS.'
-        write (1,*) '       n ! y to print G_imp elements on a file and n to ignore.'
+        write (1,*) '          n ! y to print G_imp elements on a file and n to ignore.'
+        write (1,*) '   0.00001  ! epsilon for impurity self-consistency.'
         do i = 1, NUMIMP
             j = IMPPTSVAR(4,i)
             write (1,'(3F15.9, A, I7)') nu(j), REAL(DELTA(j)), AIMAG(DELTA(j)), ' ! n and D for atom No. ', i

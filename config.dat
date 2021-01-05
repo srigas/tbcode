@@ -14,3 +14,5 @@
 0.1 ! Mixing factor for Delta
 1000 ! Points for DoS
 0.1 ! Lorentzian broadening at DoS
+0.0001 ! epsilon for metal self-consistency
+0.00001 ! epsilon for sc self-consistency

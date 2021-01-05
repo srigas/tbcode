@@ -4,9 +4,9 @@ program BDG
     & maxreps, uniquecounter, NUMCHEMTYPES, intnumdenpointer, NUME, metalorno, JATOM, rcheck, MAXNEIGHB, FTIMO
     integer, allocatable, dimension(:) :: multiplicity, CHEMTYPE, NEIGHBNUM
     integer, allocatable, dimension(:,:) :: JTYPE
-    real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), epsilon, min_val, max_val, mixfactorN, RPOINT(3), TTPRIME(3),&
+    real*8 :: ALAT, a_1(3), a_2(3), a_3(3), RMAX, R0, KPOINT(3), min_val, max_val, mixfactorN, RPOINT(3), TTPRIME(3),&
     &chempot, mixfactorD, inicharge, T, PI, KB, b_1(3), b_2(3), b_3(3), DETCHECK, lorentzbroad, diffchem, newchempot, lambda, TOL,&
-    &TOTDOSATMU
+    &TOTDOSATMU, metalepsilon, scepsilon
     real*8, allocatable, dimension(:) :: W, RWORK, E0, ULCN, nu, newnu, nuzero, EIGENVALUES, SORTEDEIGVALS, &
 	& UNIQUEEIGVALS, magnet, VSUPCOND, nuup, nudown, diffN, diffD, DOSATMU
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, BETA, LHOPS, PREFACTORS, HOPPVALS
@@ -43,6 +43,8 @@ program BDG
     read(1,*) mixfactorD ! mixing factor for Delta
     read(1,*) NUME ! Number of points for DoS diagrams
     read(1,*) lorentzbroad ! Lorentz Gamma broadening
+    read(1,*) metalepsilon ! epsilon for metal self-consistency
+    read(1,*) scepsilon ! epsilon for sc self-consistency
     close(1)
 
     DETCHECK = a_1(1)*(a_2(2)*a_3(3)-a_2(3)*a_3(2)) - a_2(1)*(a_1(2)*a_3(3)-a_3(2)*a_1(3)) + &
@@ -198,7 +200,6 @@ program BDG
     end do
 
 	! These configurations ensure that the following while loop is initiated
-    epsilon = 0.0001
     metalorno = 1
     diffchem = 1.0
     reps = 0
@@ -210,7 +211,7 @@ program BDG
     read *, maxreps
 
     print *, 'Initiating METAL self-consistency procedure...'
-    do while ((MAXVAL(diffN) > epsilon .or. diffchem > epsilon) .and. reps < maxreps)
+    do while ((MAXVAL(diffN) > metalepsilon .or. diffchem > metalepsilon) .and. reps < maxreps)
 
         call HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,METALDELTA,HAMILTONIANPREP)
 
@@ -251,7 +252,7 @@ program BDG
             TOTDOSATMU = TOTDOSATMU + DOSATMU(i)
         end do
         diffchem = diffchem/TOTDOSATMU
-        newchempot = chempot + 0.5*atan(diffchem) ! New chempot for next run
+        newchempot = chempot + 0.2*atan(diffchem) ! New chempot for next run
         
         diffchem = abs(newchempot-chempot)
         chempot = newchempot ! new chempot for next run
@@ -279,7 +280,6 @@ program BDG
     ! Using the chemical potential that we obtained, as well as the charges (nu), as initial values, we proceed to use them for the
     ! self-consistency cycle of the superconductor, i.e. Delta =/= 0.
     metalorno = 0
-    epsilon = 0.000001
     reps = 0
     diffchem = 1.0
     do i = 1, NUMT
@@ -291,7 +291,7 @@ program BDG
     read *, maxreps
 
     print *, 'Initiating SC self-consistency procedure...'
-    do while ((MAXVAL(diffN) > epsilon .or. MAXVAL(diffD) > epsilon .or. diffchem > epsilon) .and. reps < maxreps) ! Check for convergence or maxreps
+    do while ((MAXVAL(diffN) > scepsilon .or. MAXVAL(diffD) > scepsilon) .and. reps < maxreps) ! Check for convergence or maxreps
 
         call HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
 
@@ -309,14 +309,11 @@ program BDG
 
 		! At that point all the eigenvalues are in the form (.,.,.,.,...) and all the eigenvectors are 4*NUMT*NUMK columns of 4*NUMT rows
 
-        diffchem = 0.0
-        TOTDOSATMU = 0.0
-		! Calculates the charges n-up, n-down and n as well as Delta and chempot
+		! Calculates the charges n-up, n-down and n as well as Delta
         do i = 1, NUMT
             nuup(i) = 0.0
             nudown(i) = 0.0
             newDELTA(i) = (0.0,0.0)
-            DOSATMU(i) = 0.0
 
             FTIMO = 4*(i-1)
 
@@ -327,9 +324,6 @@ program BDG
 
                 newDELTA(i) = newDELTA(i) -&
                 & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(i+3*NUMT,j))
-
-                DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
-                &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
             end do
 
             newnu(i) = (nuup(i) + nudown(i))/NUMK ! Normalization
@@ -337,18 +331,10 @@ program BDG
 			
             newDELTA(i) = newDELTA(i)/NUMK ! Normalization
             diffD(i) = abs(abs(newDELTA(i)) - abs(DELTA(i)))
-
-            diffchem = diffchem - (newnu(i)-nuzero(i))
-            TOTDOSATMU = TOTDOSATMU + DOSATMU(i)
         end do
-        diffchem = diffchem/TOTDOSATMU
-        newchempot = chempot + 0.5*atan(diffchem) ! New chempot for next run
-        
-        diffchem = abs(newchempot-chempot)
 
         DELTA = (1.0 - mixfactorD)*DELTA + mixfactorD*newDELTA
         nu = (1.0 - mixfactorN)*nu + mixfactorN*newnu
-        chempot = newchempot ! new chempot for next run
         print *, 'Finished run no.', reps+1
         reps = reps + 1
     end do
@@ -370,14 +356,11 @@ program BDG
     end do
 
 	! At that point, we calculate the density, magnetization and D for the final Hamiltonian using the converged values.
-    newchempot = 0.0
-    TOTDOSATMU = 0.0
     do i = 1, NUMT
         nuup(i) = 0.0
         nudown(i) = 0.0
         newDELTA(i) = (0.0,0.0)
         magnet(i) = 0.0
-        DOSATMU(i) = 0.0
 
         FTIMO = 4*(i-1)
 
@@ -388,26 +371,20 @@ program BDG
 
             newDELTA(i) = newDELTA(i) -&
             & FERMI(EIGENVALUES(j),T,KB)*VSUPCOND(i)*EIGENVECTORS(i,j)*CONJG(EIGENVECTORS(i+3*NUMT,j))
-
-            DOSATMU(i) = DOSATMU(i) + (lorentzbroad/pi)*(1.0/NUMK)*((abs(EIGENVECTORS(i,j))**2 +&
-            &abs(EIGENVECTORS(i+NUMT,j))**2)/((chempot - EIGENVALUES(j))**2 + lorentzbroad**2))
         end do
 
         newnu(i) = (nuup(i) + nudown(i))/NUMK ! Final Density per atom
         newDELTA(i) = newDELTA(i)/NUMK ! Final D per atom
         magnet(i) = (nuup(i) - nudown(i))/NUMK ! Final magnetization
-        newchempot = newchempot - (newnu(i)-nuzero(i))
-        TOTDOSATMU = TOTDOSATMU + DOSATMU(i)
 
         print *, 'n = ', newnu(i), 'for atom No. ', i
         print *, 'D = ', newDELTA(i), 'for atom No. ', i
         print *, 'M = ', magnet(i), 'for atom No. ', i
     end do
-    newchempot = 0.5*atan(newchempot/TOTDOSATMU) + chempot
-    print *, 'chempot = ', newchempot
+    print *, 'chempot = ', chempot
 
     open (1, file = 'scresults.dat', action = 'write')
-    write (1, *) newchempot
+    write (1, *) chempot
     do i = 1, NUMT
         write (1,'(4F15.9)') newnu(i), magnet(i), REAL(newDELTA(i)), AIMAG(newDELTA(i))
     end do

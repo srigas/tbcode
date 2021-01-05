@@ -1,14 +1,14 @@
 program BDG_IMP
     implicit none
 
-    integer :: i, j, NUME, NUMIMP, IE, INFO, FTIMO, NUMEDOS, NPNT
+    integer :: i, j, NUME, NUMIMP, IE, INFO, FTIMO, NUMEDOS, NPNT, NUMIT, MAXNUMIT
     integer, allocatable, dimension(:) :: IPIV
-    real*8 :: PI, KB, tempval1, tempval2
+    real*8 :: PI, KB, tempval1, tempval2, epsilon
     real*8, allocatable, dimension(:) :: E0, E0IMP, nuzero, nuzeroIMP, ULCN, ULCNIMP, NEWNU, VSUPCOND, &
-    &VSUPCONDIMP, NU
+    &VSUPCONDIMP, NU, DIFFN, PREVNU, DIFFD
     real*8, allocatable, dimension(:,:) :: BETA, BETAIMP, densityperimpurity
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2), ONE, MINUSONE, posham(2,2), EZ
-    complex*16, allocatable, dimension(:) :: DELTA, energies, WEIGHTS, EZDOS, NEWDELTA
+    complex*16, allocatable, dimension(:) :: DELTA, energies, WEIGHTS, EZDOS, NEWDELTA, PREVDELTA
     complex*16, allocatable, dimension(:,:) :: GREEN, HAMIMP, IDENTITY
     character(len = 1) :: selfconfin, finaldosorno, printgimp
 
@@ -22,6 +22,7 @@ program BDG_IMP
     read(1,*) NUME
     read(1,*) NUMEDOS
     read(1,*) printgimp
+    read(1,*) epsilon
     close(1)
 
     allocate(E0(NUMIMP))
@@ -43,6 +44,10 @@ program BDG_IMP
     allocate(DELTA(NUMIMP))
     allocate(NEWNU(NUMIMP))
     allocate(NEWDELTA(NUMIMP))
+    allocate(PREVNU(NUMIMP))
+    allocate(PREVDELTA(NUMIMP))
+    allocate(DIFFN(NUMIMP))
+    allocate(DIFFD(NUMIMP))
 
     allocate(energies(NUME))
     allocate(EZDOS(NUMEDOS))
@@ -50,6 +55,7 @@ program BDG_IMP
     allocate(densityperimpurity(1+NUMIMP,NUMEDOS))
 
     open(1, file = 'impconfig.dat', action = 'read')
+    read(1,*)
     read(1,*)
     read(1,*)
     read(1,*)
@@ -85,8 +91,15 @@ program BDG_IMP
     end do
     close(1)
 
-    NEWNU = NU ! Initial values
-    NEWDELTA = DELTA ! Initial values
+    ! Initial values
+    NEWNU = NU
+    NEWDELTA = DELTA
+    NUMIT = 1
+    DIFFD = 1.0
+    DIFFN = 1.0
+
+    print *, 'Please enter the maximum number of self-consistency cyles for the impurity problem.'
+    read *, MAXNUMIT
 
     180 HAMIMP(:,:) = (0.d0,0.d0)
 
@@ -130,6 +143,8 @@ program BDG_IMP
     else 
         print *, 'Commencing the calculation of G_imp for each energy value.'
         NPNT = NUME
+        PREVDELTA = NEWDELTA
+        PREVNU = NEWNU
         NEWNU = 0.d0
         NEWDELTA = (0.d0,0.d0)
         open(5, file = 'greenhost.txt', action = 'read')
@@ -212,12 +227,15 @@ program BDG_IMP
     close(6)
 
     if (finaldosorno /= 'y') then
-        print *, 'G_imp calculated.'
+        print *, 'Finished Run No.', NUMIT
         print *, '==========================='
         do i = 1, NUMIMP
+            DIFFD(i) = abs(abs(NEWDELTA(i)) - abs(PREVDELTA(i)))
+            DIFFN(i) = abs(NEWNU(i) - PREVNU(i))
             print *, 'Charge for atom No. ', i, '= ', NEWNU(i)
             print *, 'Delta for atom No. ', i, '= ', NEWDELTA(i)
         end do
+        print *, '==========================='
     endif
 
     if (finaldosorno == 'y') then
@@ -237,17 +255,17 @@ program BDG_IMP
         print *, 'DoS for impurities finished.'
     endif
 
-    ! Here an if check should be inserted so that we go back and re-build the Hamiltonian using
+    ! Here an if check is inserted so that we go back and re-build the Hamiltonian using
     ! the new charges and Deltas. This is the self-consistency for the impurity problem.
 
     ! If the self-consistency needs to continue, we go back to 180 and reset the Hamiltonian
     ! using the NEWDELTA and NEWNU calculated above.
 
     ! Number of iterations
-    !if (NUMIT < MAXNUMIT) then  
-    !    NUMIT = NUMIT + 1
-    !    goto 180
-    !endif
+    if ((MAXVAL(DIFFN) > epsilon .or. MAXVAL(DIFFD) > epsilon) .and. NUMIT < MAXNUMIT) then  
+        NUMIT = NUMIT + 1
+        goto 180
+    endif
 
     ! If the self-consistency criterion is met, then the selfconfin switch is turned to 'y'
     selfconfin = 'y'
