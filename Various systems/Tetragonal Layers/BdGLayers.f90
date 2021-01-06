@@ -288,7 +288,6 @@ program BDGLAYERS
     ! self-consistency cycle of the superconductor, i.e. Delta =/= 0.
     metalorno = 0
     reps = 0
-    diffchem = 1.0
     do i = 1, NUMT
         diffN(i) = 1.0
         diffD(i) = 1.0
@@ -298,7 +297,7 @@ program BDGLAYERS
     read *, maxreps
 
     print *, 'Initiating SC self-consistency procedure...'
-    do while ((MAXVAL(diffN) > scepsilon .or. MAXVAL(diffD) > scepsilon .or. diffchem > scepsilon) .and. reps < maxreps) ! Check for convergence or maxreps
+    do while ((MAXVAL(diffN) > scepsilon .or. MAXVAL(diffD) > scepsilon) .and. reps < maxreps) ! Check for convergence or maxreps
 
         call HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
 
