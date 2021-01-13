@@ -1,5 +1,5 @@
 1.0 ! Lattice constant
-1.0,0.0,0.0 ! a_1
+3.0,0.0,0.0 ! a_1 ! MUST BE ACCORDING TO XINDEX
 0.0,300.0,0.0 ! a_2
 0.0,0.0,300.0 ! a_3
 30,1,1 ! N_x, N_y, N_z

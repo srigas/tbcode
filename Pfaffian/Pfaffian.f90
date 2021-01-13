@@ -18,9 +18,9 @@ program PFAFFIAN
     complex*16, allocatable, dimension(:,:,:) :: EXPONS
     character(len = 1) :: manyruns
 
-    real :: ALTPFAFZERO(2), ALTPFAFPI(2)
-    real, allocatable, dimension(:) :: WORK
-    real, allocatable, dimension(:,:) :: ZEROALPHA, PIALPHA
+    real*8 :: ALTPFAFZERO(2), ALTPFAFPI(2)
+    real*8, allocatable, dimension(:) :: WORK
+    real*8, allocatable, dimension(:,:) :: ZEROALPHA, PIALPHA
 
     TOL = 0.0001 ! The fault tolerance for lattice vectors' norms
 
@@ -60,7 +60,7 @@ program PFAFFIAN
     IRLATTMAX = (2*NCELLS+1)**3 ! Configures how many neighbouring cells are taken into account
 
     call BZ(a_1,a_2,a_3,NUMKX,NUMKY,NUMKZ,PI,KPTS,NUMK,b_1,b_2,b_3) ! We create the Brillouin Zone's k-points to be used later on
-    
+
     allocate(CHEMTYPE(NUMT))
     allocate(E0(NUMT))
     allocate(ULCN(NUMT))
@@ -267,13 +267,13 @@ program PFAFFIAN
     call FINALHAM(kcounter,NUMK,HAMILTONIANPREP,EXPONS,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,NUMT,HAMILTONIAN)
     call MAKEALPHA(NUMT,HAMILTONIAN,ZEROALPHA)
 
-    call ALTPFAF('U', 'P', 4*NUMT, ZEROALPHA, 4*NUMT, ALTPFAFZERO, IWORK, WORK, LWORK, INFO)
+    call DSKPF10('U', 'P', 4*NUMT, ZEROALPHA, 4*NUMT, ALTPFAFZERO, IWORK, WORK, LWORK, INFO)
     
     kcounter = NUMK ! Corresponds to k = pi
     call FINALHAM(kcounter,NUMK,HAMILTONIANPREP,EXPONS,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,NUMT,HAMILTONIAN)
     call MAKEALPHA(NUMT,HAMILTONIAN,PIALPHA)
 
-    call ALTPFAF('U', 'P', 4*NUMT, PIALPHA, 4*NUMT, ALTPFAFPI, IWORK, WORK, LWORK, INFO)
+    call DSKPF10('U', 'P', 4*NUMT, PIALPHA, 4*NUMT, ALTPFAFPI, IWORK, WORK, LWORK, INFO)
 
     TOTSIGN = ALTPFAFPI(1)*ALTPFAFZERO(1)
 
@@ -315,8 +315,332 @@ program PFAFFIAN
     endif
 
     contains
+
+    subroutine MAGCHAIN(NUM,ROTAXIS,theta,magB,NEWBETA)
+        implicit none
+
+        integer :: NUM, i
+        real*8 :: theta, ROTAXIS(3), NEWBETA(3,NUM), magB, initheta, TOL
+
+        TOL = 0.000001 ! The tolerance for the "if" checks.
+
+        NEWBETA(:,:) = 0.d0
+
+        if (abs(ROTAXIS(1) - 1.0) < TOL .and. abs(ROTAXIS(2)) < TOL .and. abs(ROTAXIS(3)) < TOL) then
+
+            initheta = 0.d0
+
+            do i = 1, NUM
+                if (i == 1) then
+                    NEWBETA(1,i) = 0.0
+                    NEWBETA(2,i) = magB*SIN(initheta)
+                    NEWBETA(3,i) = magB*COS(initheta)
+                else
+                    NEWBETA(1,i) = 0.0
+                    NEWBETA(2,i) = magB*SIN(initheta + (i-1)*theta)
+                    NEWBETA(3,i) = magB*COS(initheta + (i-1)*theta)
+                endif
+            end do
+        else if (abs(ROTAXIS(1)) < TOL .and. abs(ROTAXIS(2) - 1.0) < TOL .and. abs(ROTAXIS(3)) < TOL) then
+
+            initheta = 0.d0
+
+            do i = 1, NUM
+                if (i == 1) then
+                    NEWBETA(1,i) = magB*COS(initheta)
+                    NEWBETA(2,i) = 0.0 
+                    NEWBETA(3,i) = magB*SIN(initheta)
+                else
+                    NEWBETA(1,i) = magB*COS(initheta + (i-1)*theta)
+                    NEWBETA(2,i) = 0.0
+                    NEWBETA(3,i) = magB*SIN(initheta + (i-1)*theta)
+                endif
+            end do
+        else if (abs(ROTAXIS(1)) < TOL .and. abs(ROTAXIS(2)) < TOL .and. abs(ROTAXIS(3) - 1.0) < TOL) then
+
+            initheta = 0.d0
+
+            do i = 1, NUM
+                if (i == 1) then
+                    NEWBETA(1,i) = magB*COS(initheta)
+                    NEWBETA(2,i) = magB*SIN(initheta)
+                    NEWBETA(3,i) = 0.0
+                else
+                    NEWBETA(1,i) = magB*COS(initheta + (i-1)*theta)
+                    NEWBETA(2,i) = magB*SIN(initheta + (i-1)*theta)
+                    NEWBETA(3,i) = 0.0
+                endif
+            end do
+        else
+            ! This is the case where we want to rotate B along an arbitrary axis.
+            print *, 'Invalid input for the magchain rotation axis.'
+
+        endif
+
+    end subroutine MAGCHAIN
+
+    subroutine HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
+        implicit none
+
+        integer :: NUMT, i, j, ITYPE, JTYPE, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
+        real*8 :: TTPRIME(3), RPOINT(3), TPTS(3,NUMT), RLATT(3,IRLATTMAX), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), &
+        &PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), NNDIS(NUMCHEMTYPES,NUMCHEMTYPES), expon, R0, TOL
+
+        TOL = 0.0001
+
+        open (1, file = 'hoppings.dat', action = 'read')
+        do i = 1, NUMCHEMTYPES
+            read(1,*) (LHOPS(i,j), j = 1, NUMCHEMTYPES)
+        end do
+        close(1)
+        
+        do i = 1, NUMCHEMTYPES
+            do j = 1, NUMCHEMTYPES
+                if (LHOPS(i,j) /= LHOPS(j,i)) then
+                    print *, 'Wrong value inserted as hopping element.'
+                    print *, 'The', i,j, 'value is different from the', j,i, 'value.'
+                    call exit(123)
+                endif
+            end do
+        end do
+
+        ! This calculates the nearest-neighbour distance for each interaction
+        do ITYPE = 1, NUMCHEMTYPES
+            do JTYPE = 1, NUMCHEMTYPES
+                NNDIS(JTYPE,ITYPE) = 100000.0
+
+                do i = 1, NUMT
+                    do j = 1, NUMT
+
+                        if (CHEMTYPE(i) == ITYPE .and. CHEMTYPE(j) == JTYPE) then
+                            TTPRIME = TPTS(1:3,j) - TPTS(1:3,i)
+                            do IRLATT = 1, IRLATTMAX
+                                RPOINT = RLATT(1:3,IRLATT)
+
+                                if (NNDIS(JTYPE,ITYPE) > norm2(RPOINT+TTPRIME) .and. norm2(RPOINT+TTPRIME) > TOL) then
+                                    NNDIS(JTYPE,ITYPE) = norm2(RPOINT+TTPRIME)
+                                endif
+
+                            end do
+                        endif
+
+                    end do
+                end do
     
-    SUBROUTINE SMUL10(A, B)
+                expon = exp(-NNDIS(JTYPE,ITYPE)/R0)
+                PREFACTORS(JTYPE,ITYPE) = LHOPS(JTYPE,ITYPE)/expon ! This sets the prefactors to be entered in the Hamiltonian
+            end do
+        end do
+
+    end subroutine HOPPS
+
+    subroutine HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
+        implicit none
+        integer :: NUMT, i
+        real*8 :: chempot, E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(3,NUMT)
+        complex*16 :: xPauli(2,2), yPauli(2,2), zPauli(2,2), IdentityPauli(2,2), helperham(2,2), DELTA(NUMT),&
+        & HAMILTONIANPREP(4*NUMT,4*NUMT)
+
+        HAMILTONIANPREP(:,:) = (0.0,0.0)
+
+        do i = 1, NUMT
+
+            helperham = (E0(i) - chempot + ULCN(i)*(nu(i) - nuzero(i)))*IdentityPauli -&
+            &BETA(1,i)*xPauli - BETA(2,i)*yPauli - BETA(3,i)*zPauli
+
+            HAMILTONIANPREP(i, i) = helperham(1,1)
+            HAMILTONIANPREP(i, i + NUMT) = helperham(1,2)
+            !HAMILTONIANPREP(i, i + 2*NUMT) = (0.0,0.0)
+            HAMILTONIANPREP(i, i + 3*NUMT) = DELTA(i)
+
+            HAMILTONIANPREP(i + NUMT, i) = helperham(2,1)
+            HAMILTONIANPREP(i + NUMT, i + NUMT) = helperham(2,2)
+            HAMILTONIANPREP(i + NUMT, i + 2*NUMT) = DELTA(i)
+            !HAMILTONIANPREP(i + NUMT, i + 3*NUMT) = (0.0,0.0)
+
+            !HAMILTONIANPREP(i + 2*NUMT, i) = (0.0,0.0)
+            HAMILTONIANPREP(i + 2*NUMT, i + NUMT) = CONJG(DELTA(i))
+            HAMILTONIANPREP(i + 2*NUMT, i + 2*NUMT) = -CONJG(helperham(1,1))
+            HAMILTONIANPREP(i + 2*NUMT, i + 3*NUMT) = CONJG(helperham(1,2))
+
+            HAMILTONIANPREP(i + 3*NUMT, i) = CONJG(DELTA(i))
+            !HAMILTONIANPREP(i + 3*NUMT, i + NUMT) = (0.0,0.0)
+            HAMILTONIANPREP(i + 3*NUMT, i + 2*NUMT) = CONJG(helperham(2,1))
+            HAMILTONIANPREP(i + 3*NUMT, i + 3*NUMT) = -CONJG(helperham(2,2))
+
+        end do
+
+    end subroutine HAMPREP
+
+    subroutine FINALHAM(kcounter,NUMK,HAMILTONIANPREP,EXPONS,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,NUMT,HAMILTONIAN)
+        implicit none
+        integer, intent(in) :: kcounter
+        integer :: NUMT, NUMK, i, jneighb, NEIGHBNUM(NUMT), MAXNEIGHB, JATOM, JTYPE(MAXNEIGHB,NUMT)
+        real*8 :: HOPPVALS(MAXNEIGHB,NUMT)
+        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), HAMILTONIANPREP(4*NUMT,4*NUMT), EXPONS(NUMK,MAXNEIGHB,NUMT), term
+
+        HAMILTONIAN(:,:) = HAMILTONIANPREP(:,:)
+
+        do i = 1, NUMT
+            do jneighb = 1, NEIGHBNUM(i)
+
+                JATOM = JTYPE(jneighb,i)
+
+                term = EXPONS(kcounter,jneighb,i)*HOPPVALS(jneighb,i)
+
+                HAMILTONIAN(i,JATOM) = HAMILTONIAN(i,JATOM) + term
+                HAMILTONIAN(i + NUMT,JATOM + NUMT) = HAMILTONIAN(i + NUMT,JATOM + NUMT) + term
+                HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) = HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) - term
+                HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) = HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) - term
+
+            end do
+        end do
+
+    end subroutine FINALHAM
+
+    subroutine MAKEALPHA(NUMT,HAMILTONIAN,ALPHAMATRIX)
+        implicit none
+        integer :: NUMT, i, j
+        real*8 :: ALPHAMATRIX(4*NUMT,4*NUMT)
+        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT)
+
+        do i = 1, NUMT
+            do j = 1, NUMT
+
+                ALPHAMATRIX(i, i) = 0.D0
+                ALPHAMATRIX(i, j + NUMT) = AIMAG(HAMILTONIAN(i, j + 3*NUMT))
+                ALPHAMATRIX(i, j + 2*NUMT) = AIMAG(HAMILTONIAN(i + NUMT, j)) - 0.5*REAL(HAMILTONIAN(i, j)+ &
+                &HAMILTONIAN(i + NUMT, j + NUMT))
+                ALPHAMATRIX(i, j + 3*NUMT) = REAL(HAMILTONIAN(i, j + NUMT) - HAMILTONIAN(i, j + 3*NUMT))
+
+                ALPHAMATRIX(i + NUMT, j) = -1.D0*ALPHAMATRIX(i, j + NUMT)
+                ALPHAMATRIX(i + NUMT, j + NUMT) = 0.D0
+                ALPHAMATRIX(i + NUMT, j + 2*NUMT) = -1.D0*REAL(HAMILTONIAN(i, j + NUMT) + HAMILTONIAN(i, j + 3*NUMT))
+                ALPHAMATRIX(i + NUMT, j + 3*NUMT) = AIMAG(HAMILTONIAN(i + NUMT, j)) + 0.5*REAL(HAMILTONIAN(i, j)+ &
+                &HAMILTONIAN(i + NUMT, j + NUMT))
+
+                ALPHAMATRIX(i + 2*NUMT, j) = -1.D0*ALPHAMATRIX(i, j + 2*NUMT)
+                ALPHAMATRIX(i + 2*NUMT, j + NUMT) = -1.0*ALPHAMATRIX(i + NUMT, j + 2*NUMT)
+                ALPHAMATRIX(i + 2*NUMT, j + 2*NUMT) = 0.D0
+                ALPHAMATRIX(i + 2*NUMT, j + 3*NUMT) = AIMAG(HAMILTONIAN(i, j + 3*NUMT)) + 0.5*REAL(HAMILTONIAN(i, j)- &
+                &HAMILTONIAN(i + NUMT, j + NUMT))
+
+                ALPHAMATRIX(i + 3*NUMT, j) = -1.D0*ALPHAMATRIX(i, j + 3*NUMT)
+                ALPHAMATRIX(i + 3*NUMT, j + NUMT) = -1.D0*ALPHAMATRIX(i + NUMT, j + 3*NUMT)
+                ALPHAMATRIX(i + 3*NUMT, j + 2*NUMT) = -1.D0*ALPHAMATRIX(i + 2*NUMT, j + 3*NUMT)
+                ALPHAMATRIX(i + 3*NUMT, j + 3*NUMT) = 0.D0
+
+            end do
+        end do
+
+    end subroutine MAKEALPHA
+
+    subroutine BZ(a,b,c,N_x,N_y,N_z,PI,KPTS,Ntot,b_1,b_2,b_3)
+        implicit none
+
+        integer :: N_x, N_y, N_z, Ntot, counter, i, j, k
+        real*8 :: a(3), b(3), c(3), b_1(3), b_2(3), b_3(3), flx, fly, flz, c_1, c_2, c_3
+        real*8, allocatable, dimension(:,:) :: KPTS
+        real*8 :: PI, volume
+        counter = 1
+		
+        volume = DOT_PRODUCT(a, CROSS_PRODUCT(b,c)) !The volume of the unit cell
+
+		!At this point we calculate the reciprocal space vectors.
+        b_1 = 2.0*PI*CROSS_PRODUCT(b,c)/volume
+        b_2 = 2.0*PI*CROSS_PRODUCT(c,a)/volume
+        b_3 = 2.0*PI*CROSS_PRODUCT(a,b)/volume
+
+        Ntot = N_x*N_y*N_z !The total number of different wavevectors in reciprocal space.
+
+        allocate(KPTS(3,Ntot))
+        
+        flx = dfloat(N_x)
+        fly = dfloat(N_y)
+        flz = dfloat(N_z)
+        
+        c_1 = -flx/2.0+1.0
+                    
+        do i = 1, N_x
+            c_2 = -fly/2.0
+            do j = 1, N_y
+                c_3 = -flz/2.0
+                do k = 1, N_z
+                    
+                    KPTS(1, counter) = (b_1(1)*c_1)/flx
+                    KPTS(2, counter) = 0.D0
+                    KPTS(3, counter) = 0.D0
+                    counter = counter + 1
+                    c_3 = c_3 + 1.0
+                end do
+                c_2 = c_2 + 1.0
+            end do
+            c_1 = c_1 + 1.0
+        end do
+
+    end subroutine BZ
+
+    subroutine RPTS(a_1,a_2,a_3,NCELLS,RLATT,IRLATTMAX)
+        implicit none
+
+        integer :: i,j,k,IRLATTMAX,counter,NCELLS
+        real*8 :: a_1(3), a_2(3), a_3(3)
+        real*8, allocatable, dimension(:,:) :: RLATT
+        counter = 1
+
+        allocate(RLATT(3,IRLATTMAX))
+
+        do i = -NCELLS,NCELLS
+            do j = -NCELLS,NCELLS
+                do k = -NCELLS,NCELLS
+                    RLATT(1:3,counter) = i*a_1 + j*a_2 + k*a_3
+                    counter = counter + 1
+                end do
+            end do
+        end do
+                
+    end subroutine RPTS
+
+    subroutine CONSTANTS(s_0,s_1,s_2,s_3,CI,PI,KB) ! Sets some global constants
+        implicit none
+        complex*16 :: s_0(2,2), s_1(2,2), s_2(2,2), s_3(2,2), CI
+        real*8 :: PI, KB
+        
+        s_0(1,1) = (1.0,0.0)
+        s_0(1,2) = (0.0,0.0)
+        s_0(2,1) = (0.0,0.0)
+        s_0(2,2) = (1.0,0.0)
+        s_1(1,1) = (0.0,0.0)
+        s_1(1,2) = (1.0,0.0)
+        s_1(2,1) = (1.0,0.0)
+        s_1(2,2) = (0.0,0.0)
+        s_2(1,1) = (0.0,0.0)
+        s_2(1,2) = (0.0,-1.0)
+        s_2(2,1) = (0.0,1.0)
+        s_2(2,2) = (0.0,0.0)
+        s_3(1,1) = (1.0,0.0)
+        s_3(1,2) = (0.0,0.0)
+        s_3(2,1) = (0.0,0.0)
+        s_3(2,2) = (-1.0,0.0)
+
+        CI = (0.0,1.0) ! setting the imaginary unit
+        PI = 4.D0*atan(1.D0) ! setting π
+        KB = 1.0 ! The value in eVs is 8.617385D-5
+
+    end subroutine CONSTANTS
+
+    function CROSS_PRODUCT(x,y) result(cross)
+        implicit none
+        real*8, dimension(3), intent(in) :: x, y
+        real*8, dimension(3) :: cross
+
+        cross(1) = x(2)*y(3) - x(3)*y(2)
+        cross(2) = x(3)*y(1) - x(1)*y(3)
+        cross(3) = x(1)*y(2) - x(2)*y(1)
+		
+    end function CROSS_PRODUCT
+
+    subroutine SMUL10(A, B)
         implicit none
         REAL A(2)
         REAL B
@@ -454,6 +778,1508 @@ program PFAFFIAN
         END IF
   
     end subroutine ZMUL10
+
+    subroutine DSKMV(UPLO,N,ALPHA,A,LDA,X,INCX,BETA,Y,INCY)
+
+        implicit none
+
+        DOUBLE PRECISION ALPHA,BETA
+        INTEGER INCX,INCY,LDA,N
+        CHARACTER UPLO
+
+        DOUBLE PRECISION A(LDA,*),X(*),Y(*)
+
+        DOUBLE PRECISION ONE
+        PARAMETER (ONE= 1.0D+0)
+        DOUBLE PRECISION ZERO
+        PARAMETER (ZERO= 0.0D+0)
+
+        DOUBLE PRECISION TEMP1,TEMP2
+        INTEGER I,INFO,IX,IY,J,JX,JY,KX,KY
+
+        LOGICAL LSAME
+        EXTERNAL LSAME
+
+        EXTERNAL XERBLA
+
+        INTRINSIC MAX
+
+        INFO = 0
+        IF (.NOT.LSAME(UPLO,'U') .AND. .NOT.LSAME(UPLO,'L')) THEN
+            INFO = 1
+        ELSE IF (N.LT.0) THEN
+            INFO = 2
+        ELSE IF (LDA.LT.MAX(1,N)) THEN
+            INFO = 5
+        ELSE IF (INCX.EQ.0) THEN
+            INFO = 7
+        ELSE IF (INCY.EQ.0) THEN
+            INFO = 10
+        END IF
+        IF (INFO.NE.0) THEN
+            CALL XERBLA('ZHEMV ',INFO)
+            RETURN
+        END IF
+
+        IF ((N.EQ.0) .OR. ((ALPHA.EQ.ZERO).AND. (BETA.EQ.ONE))) RETURN
+
+        IF (INCX.GT.0) THEN
+            KX = 1
+        ELSE
+            KX = 1 - (N-1)*INCX
+        END IF
+        IF (INCY.GT.0) THEN
+            KY = 1
+        ELSE
+            KY = 1 - (N-1)*INCY
+        END IF
+
+        IF (BETA.NE.ONE) THEN
+            IF (INCY.EQ.1) THEN
+                IF (BETA.EQ.ZERO) THEN
+                    DO 10 I = 1,N
+                        Y(I) = ZERO
+        10             CONTINUE
+                ELSE
+                    DO 20 I = 1,N
+                        Y(I) = BETA*Y(I)
+        20             CONTINUE
+                END IF
+            ELSE
+                IY = KY
+                IF (BETA.EQ.ZERO) THEN
+                    DO 30 I = 1,N
+                        Y(IY) = ZERO
+                        IY = IY + INCY
+        30             CONTINUE
+                ELSE
+                    DO 40 I = 1,N
+                        Y(IY) = BETA*Y(IY)
+                        IY = IY + INCY
+        40             CONTINUE
+                END IF
+            END IF
+        END IF
+        IF (ALPHA.EQ.ZERO) RETURN
+        IF (LSAME(UPLO,'U')) THEN
+  
+        !        Form  y  when A is stored in upper triangle.
+  
+            IF ((INCX.EQ.1) .AND. (INCY.EQ.1)) THEN
+                DO 60 J = 1,N
+                    TEMP1 = ALPHA*X(J)
+                    TEMP2 = ZERO
+                    DO 50 I = 1,J - 1
+                        Y(I) = Y(I) + TEMP1*A(I,J)
+                        TEMP2 = TEMP2 - A(I,J)*X(I)
+        50             CONTINUE
+                    Y(J) = Y(J) + ALPHA*TEMP2
+        60         CONTINUE
+            ELSE
+                JX = KX
+                JY = KY
+                DO 80 J = 1,N
+                    TEMP1 = ALPHA*X(JX)
+                    TEMP2 = ZERO
+                    IX = KX
+                    IY = KY
+                    DO 70 I = 1,J - 1
+                        Y(IY) = Y(IY) + TEMP1*A(I,J)
+                        TEMP2 = TEMP2 - A(I,J)*X(IX)
+                        IX = IX + INCX
+                        IY = IY + INCY
+        70             CONTINUE
+                    Y(JY) = Y(JY) + ALPHA*TEMP2
+                    JX = JX + INCX
+                    JY = JY + INCY
+        80         CONTINUE
+            END IF
+        ELSE
+        !
+        !        Form  y  when A is stored in lower triangle.
+        !
+            IF ((INCX.EQ.1) .AND. (INCY.EQ.1)) THEN
+                DO 100 J = 1,N
+                    TEMP1 = ALPHA*X(J)
+                    TEMP2 = ZERO
+                    DO 90 I = J + 1,N
+                        Y(I) = Y(I) + TEMP1*A(I,J)
+                        TEMP2 = TEMP2 - A(I,J)*X(I)
+        90             CONTINUE
+                    Y(J) = Y(J) + ALPHA*TEMP2
+        100         CONTINUE
+            ELSE
+                JX = KX
+                JY = KY
+                DO 120 J = 1,N
+                    TEMP1 = ALPHA*X(JX)
+                    TEMP2 = ZERO
+                    IX = JX
+                    IY = JY
+                    DO 110 I = J + 1,N
+                        IX = IX + INCX
+                        IY = IY + INCY
+                        Y(IY) = Y(IY) + TEMP1*A(I,J)
+                        TEMP2 = TEMP2 - A(I,J)*X(IX)
+        110             CONTINUE
+                    Y(JY) = Y(JY) + ALPHA*TEMP2
+                    JX = JX + INCX
+                    JY = JY + INCY
+        120         CONTINUE
+            END IF
+        END IF
+        !
+        RETURN
+
+    end subroutine DSKMV
+
+    subroutine DSKR2K(UPLO,TRANS,N,K,ALPHA,A,LDA,B,LDB,BETA,C,LDC)
+
+        implicit none
+        DOUBLE PRECISION ALPHA
+        DOUBLE PRECISION BETA
+        INTEGER K,LDA,LDB,LDC,N
+        CHARACTER TRANS,UPLO
+
+        DOUBLE PRECISION A(LDA,*),B(LDB,*),C(LDC,*)
+
+        LOGICAL LSAME
+        EXTERNAL LSAME
+
+        EXTERNAL XERBLA
+
+        INTRINSIC MAX
+
+        DOUBLE PRECISION TEMP1,TEMP2
+        INTEGER I,INFO,J,L,NROWA
+        LOGICAL UPPER
+
+        DOUBLE PRECISION ONE
+        PARAMETER (ONE= 1.0D+0)
+        DOUBLE PRECISION ZERO
+        PARAMETER (ZERO= 0.0D+0)
+
+        IF (LSAME(TRANS,'N')) THEN
+            NROWA = N
+        ELSE
+            NROWA = K
+        END IF
+        UPPER = LSAME(UPLO,'U')
+
+        INFO = 0
+        IF ((.NOT.UPPER) .AND. (.NOT.LSAME(UPLO,'L'))) THEN
+            INFO = 1
+        ELSE IF ((.NOT.LSAME(TRANS,'N')) .AND. (.NOT.LSAME(TRANS,'T'))) THEN
+            INFO = 2
+        ELSE IF (N.LT.0) THEN
+            INFO = 3
+        ELSE IF (K.LT.0) THEN
+            INFO = 4
+        ELSE IF (LDA.LT.MAX(1,NROWA)) THEN
+            INFO = 7
+        ELSE IF (LDB.LT.MAX(1,NROWA)) THEN
+            INFO = 9
+        ELSE IF (LDC.LT.MAX(1,N)) THEN
+            INFO = 12
+        END IF
+        IF (INFO.NE.0) THEN
+            CALL XERBLA('DSKR2K',INFO)
+            RETURN
+        END IF
+
+        IF ((N.EQ.0) .OR. (((ALPHA.EQ.ZERO).OR. (K.EQ.0)).AND. (BETA.EQ.ONE))) RETURN
+
+        IF (ALPHA.EQ.ZERO) THEN
+            IF (UPPER) THEN
+                IF (BETA.EQ.ZERO) THEN
+                    DO 20 J = 1,N
+                        DO 10 I = 1,J
+                            C(I,J) = ZERO
+        10                 CONTINUE
+        20             CONTINUE
+                ELSE
+                    DO 40 J = 1,N
+                        DO 30 I = 1,J - 1
+                            C(I,J) = BETA*C(I,J)
+        30                 CONTINUE
+                        C(J,J) = ZERO
+        40             CONTINUE
+                END IF
+            ELSE
+                IF (BETA.EQ.ZERO) THEN
+                    DO 60 J = 1,N
+                        DO 50 I = J,N
+                            C(I,J) = ZERO
+        50                 CONTINUE
+        60             CONTINUE
+                ELSE
+                    DO 80 J = 1,N
+                        C(J,J) = ZERO
+                        DO 70 I = J + 1,N
+                            C(I,J) = BETA*C(I,J)
+        70                 CONTINUE
+        80             CONTINUE
+                END IF
+            END IF
+            RETURN
+        END IF
+
+        IF (LSAME(TRANS,'N')) THEN
+
+            IF (UPPER) THEN
+                DO 130 J = 1,N
+                    IF (BETA.EQ.ZERO) THEN
+                        DO 90 I = 1,J
+                            C(I,J) = ZERO
+        90                 CONTINUE
+                    ELSE IF (BETA.NE.ONE) THEN
+                        DO 100 I = 1,J - 1
+                            C(I,J) = BETA*C(I,J)
+        100                 CONTINUE
+                        C(J,J) = ZERO
+                    ELSE
+                        C(J,J) = ZERO
+                    END IF
+                    DO 120 L = 1,K
+                        IF ((A(J,L).NE.ZERO) .OR. (B(J,L).NE.ZERO)) THEN
+                            TEMP1 = ALPHA*B(J,L)
+                            TEMP2 = ALPHA*A(J,L)
+                            DO 110 I = 1,J - 1
+                                C(I,J) = C(I,J) + A(I,L)*TEMP1 - B(I,L)*TEMP2
+        110                     CONTINUE
+                            C(J,J) = ZERO
+                        END IF
+        120             CONTINUE
+        130         CONTINUE
+            ELSE
+                DO 180 J = 1,N
+                    IF (BETA.EQ.ZERO) THEN
+                        DO 140 I = J,N
+                            C(I,J) = ZERO
+        140                 CONTINUE
+                    ELSE IF (BETA.NE.ONE) THEN
+                        DO 150 I = J + 1,N
+                            C(I,J) = BETA*C(I,J)
+        150                 CONTINUE
+                        C(J,J) = ZERO
+                    ELSE
+                        C(J,J) = ZERO
+                    END IF
+                    DO 170 L = 1,K
+                        IF ((A(J,L).NE.ZERO) .OR. (B(J,L).NE.ZERO)) THEN
+                            TEMP1 = ALPHA*B(J,L)
+                            TEMP2 = ALPHA*A(J,L)
+                            DO 160 I = J + 1,N
+                                C(I,J) = C(I,J) + A(I,L)*TEMP1 - B(I,L)*TEMP2
+        160                     CONTINUE
+                            C(J,J) = ZERO
+                        END IF
+        170             CONTINUE
+        180         CONTINUE
+            END IF
+        ELSE
+
+            IF (UPPER) THEN
+                DO 210 J = 1,N
+                    DO 200 I = 1,J
+                        TEMP1 = ZERO
+                        TEMP2 = ZERO
+                        DO 190 L = 1,K
+                            TEMP1 = TEMP1 + A(L,I)*B(L,J)
+                            TEMP2 = TEMP2 + B(L,I)*A(L,J)
+        190                 CONTINUE
+                        IF (I.EQ.J) THEN
+                        C(J,J) = ZERO
+                        ELSE
+                            IF (BETA.EQ.ZERO) THEN
+                                C(I,J) = ALPHA*TEMP1 - ALPHA*TEMP2
+                            ELSE
+                                C(I,J) = BETA*C(I,J) + ALPHA*TEMP1 - ALPHA*TEMP2
+                            END IF
+                        END IF
+        200             CONTINUE
+        210         CONTINUE
+            ELSE
+                DO 240 J = 1,N
+                    DO 230 I = J,N
+                        TEMP1 = ZERO
+                        TEMP2 = ZERO
+                        DO 220 L = 1,K
+                            TEMP1 = TEMP1 + A(L,I)*B(L,J)
+                            TEMP2 = TEMP2 + B(L,I)*A(L,J)
+        220                 CONTINUE
+                        IF (I.EQ.J) THEN
+                        C(J,J) = ZERO
+                        ELSE
+                            IF (BETA.EQ.ZERO) THEN
+                                C(I,J) = ALPHA*TEMP1 - ALPHA*TEMP2
+                            ELSE
+                                C(I,J) = BETA*C(I,J) + ALPHA*TEMP1 - ALPHA*TEMP2
+                            END IF
+                        END IF
+        230             CONTINUE
+        240         CONTINUE
+            END IF
+        END IF
+
+        RETURN
+    end subroutine DSKR2K
+
+    subroutine DSKR2(UPLO,N,ALPHA,X,INCX,Y,INCY,A,LDA)
+
+        implicit none
+
+        DOUBLE PRECISION ALPHA
+        INTEGER INCX,INCY,LDA,N
+        CHARACTER UPLO
+
+        DOUBLE PRECISION A(LDA,*),X(*),Y(*)
+
+        DOUBLE PRECISION ZERO
+        PARAMETER (ZERO = 0.0D+0)
+
+        DOUBLE PRECISION TEMP1,TEMP2
+        INTEGER I,INFO,IX,IY,J,JX,JY,KX,KY
+
+        LOGICAL LSAME
+        EXTERNAL LSAME
+
+        EXTERNAL XERBLA
+
+        INTRINSIC MAX
+
+        INFO = 0
+        IF (.NOT.LSAME(UPLO,'U') .AND. .NOT.LSAME(UPLO,'L')) THEN
+            INFO = 1
+        ELSE IF (N.LT.0) THEN
+            INFO = 2
+        ELSE IF (INCX.EQ.0) THEN
+            INFO = 5
+        ELSE IF (INCY.EQ.0) THEN
+            INFO = 7
+        ELSE IF (LDA.LT.MAX(1,N)) THEN
+            INFO = 9
+        END IF
+        IF (INFO.NE.0) THEN
+            CALL XERBLA('DSKR2 ',INFO)
+            RETURN
+        END IF
+
+        IF ((N.EQ.0) .OR. (ALPHA.EQ.ZERO)) RETURN
+
+        IF ((INCX.NE.1) .OR. (INCY.NE.1)) THEN
+            IF (INCX.GT.0) THEN
+                KX = 1
+            ELSE
+                KX = 1 - (N-1)*INCX
+            END IF
+            IF (INCY.GT.0) THEN
+                KY = 1
+            ELSE
+                KY = 1 - (N-1)*INCY
+            END IF
+            JX = KX
+            JY = KY
+        END IF
+
+        IF (LSAME(UPLO,'U')) THEN
+
+            IF ((INCX.EQ.1) .AND. (INCY.EQ.1)) THEN
+                DO 20 J = 1,N
+                    IF ((X(J).NE.ZERO) .OR. (Y(J).NE.ZERO)) THEN
+                        TEMP1 = ALPHA*Y(J)
+                        TEMP2 = ALPHA*X(J)
+                        DO 10 I = 1,J - 1
+                            A(I,J) = A(I,J) + X(I)*TEMP1 - Y(I)*TEMP2
+        10                 CONTINUE
+                        A(J,J) = ZERO
+                    ELSE
+                        A(J,J) = ZERO
+                    END IF
+        20         CONTINUE
+            ELSE
+                DO 40 J = 1,N
+                    IF ((X(JX).NE.ZERO) .OR. (Y(JY).NE.ZERO)) THEN
+                        TEMP1 = ALPHA*Y(JY)
+                        TEMP2 = ALPHA*X(JX)
+                        IX = KX
+                        IY = KY
+                        DO 30 I = 1,J - 1
+                            A(I,J) = A(I,J) + X(IX)*TEMP1 - Y(IY)*TEMP2
+                            IX = IX + INCX
+                            IY = IY + INCY
+        30                 CONTINUE
+                        A(J,J) = ZERO
+                    ELSE
+                        A(J,J) = ZERO
+                    END IF
+                    JX = JX + INCX
+                    JY = JY + INCY
+        40         CONTINUE
+            END IF
+        ELSE
+
+            IF ((INCX.EQ.1) .AND. (INCY.EQ.1)) THEN
+                DO 60 J = 1,N
+                    IF ((X(J).NE.ZERO) .OR. (Y(J).NE.ZERO)) THEN
+                        TEMP1 = ALPHA*Y(J)
+                        TEMP2 = ALPHA*X(J)
+                        A(J,J) = ZERO
+                        DO 50 I = J + 1,N
+                            A(I,J) = A(I,J) + X(I)*TEMP1 - Y(I)*TEMP2
+        50                 CONTINUE
+                    ELSE
+                        A(J,J) = ZERO
+                    END IF
+        60         CONTINUE
+            ELSE
+                DO 80 J = 1,N
+                    IF ((X(JX).NE.ZERO) .OR. (Y(JY).NE.ZERO)) THEN
+                        TEMP1 = ALPHA*Y(JY)
+                        TEMP2 = ALPHA*X(JX)
+                        A(J,J) = ZERO
+                        IX = JX
+                        IY = JY
+                        DO 70 I = J + 1,N
+                            IX = IX + INCX
+                            IY = IY + INCY
+                            A(I,J) = A(I,J) + X(IX)*TEMP1 - Y(IY)*TEMP2
+        70                 CONTINUE
+                    ELSE
+                        A(J,J) = ZERO
+                    END IF
+                    JX = JX + INCX
+                    JY = JY + INCY
+        80         CONTINUE
+            END IF
+        END IF
+
+        RETURN
+    end subroutine DSKR2
+
+    subroutine DLASKTRF(UPLO, MODE, N, NB, A, LDA, IPIV, W, LDW, INFO)
+
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, LDW, N, NB, STEP
+
+        INTEGER            IPIV( * )
+        DOUBLE PRECISION   A( LDA, * )
+        DOUBLE PRECISION   W( LDW, * )
+
+        DOUBLE PRECISION   ZERO, ONE
+        PARAMETER          ( ZERO = 0.0D+0, ONE = 1.0D+0 )
+
+        INTEGER            K, KK, KP, NPANEL, WK
+        DOUBLE PRECISION   COLMAX, T
+
+        LOGICAL            LSAME
+        INTEGER            IDAMAX
+        EXTERNAL           LSAME, IDAMAX
+
+        EXTERNAL           DSCAL, DSWAP, DCOPY, DGEMV, XERBLA
+
+        INTRINSIC          ABS, MAX
+
+        INFO = 0
+
+        IF( LSAME( MODE, 'P' ) ) THEN
+            STEP = 2
+        ELSE
+            STEP = 1
+        END IF
+
+        NPANEL = NB * STEP
+
+        IF( LSAME( UPLO, 'U' ) ) THEN
+
+            WK = 0
+            DO 10 K=N, MAX(N-NPANEL+1, 2), -1
+
+                KK = K-1
+
+                IF( K .LT. N) THEN
+
+                IF( WK .GT. 0 ) THEN
+                    A( K, K ) = ZERO
+                    CALL DGEMV( 'N', K, WK, +ONE, A( 1, N-(WK-1)*STEP ), LDA*STEP, W( K, NB-WK+1 ), &
+                    &LDW, ONE, A( 1, K ), 1 )
+                    CALL DGEMV( 'N', K, WK, -ONE, W( 1, NB-WK+1 ), LDW, A( K, N-(WK-1)*STEP ), &
+                    &LDA*STEP, ONE, A( 1, K ), 1 )
+                    A( K, K ) = ZERO
+                END IF
+
+                IF( MOD(K, STEP).EQ.1 .OR. STEP.EQ.1 ) THEN
+                    WK = WK + 1
+                    CALL DCOPY(K, A(1, K), 1, W(1, NB-WK+1 ), 1)
+                END IF
+            END IF
+
+            IF( MOD(K, STEP) .EQ. 0) THEN
+
+                KP = IDAMAX(K-1, A( 1, K ), 1)
+                COLMAX = ABS( A( KP, K ) )
+
+                IF( COLMAX.EQ.ZERO ) THEN
+
+                    IF( INFO.EQ.0 ) THEN
+                        INFO = K - 1
+                    END IF
+                    KP = KK
+                END IF
+
+                IF( KP .NE. KK ) THEN
+                    CALL DSWAP( KP-1, A( 1, KK ), 1, A( 1, KP ),1)
+                    CALL DSWAP( KK-KP-1, A( KP+1, KK ), 1, A( KP, KP+1 ), LDA )
+
+                    CALL DSWAP( N-K+1, A( KK, K), LDA, A( KP, K), LDA)
+
+                    CALL DSCAL(KK-KP, -ONE, A(KP, KK), 1)
+                    CALL DSCAL(KK-KP-1, -ONE, A(KP, KP+1), LDA)
+
+                    IF( WK .GT. 0 ) THEN
+                        CALL DSWAP( WK, W( KK, NB-WK+1 ), LDW, W( KP, NB-WK+1 ), LDW)
+                    END IF
+                END IF
+
+                IF( COLMAX .NE. ZERO ) THEN
+
+                    CALL DSCAL(K-2, ONE/A( K-1, K ), A(1, K), 1)
+                END IF
+
+                IPIV( K-1 ) = KP
+
+                ELSE
+
+                    IPIV( K-1 ) = K-1
+                END IF
+        10      CONTINUE
+
+        IF( N-NPANEL+1 .GT. 2 ) THEN
+
+        T = A( N-NPANEL, N-NPANEL+1 )
+                A( N-NPANEL, N-NPANEL+1 ) = ZERO
+
+                IF( WK .LT. NB) THEN
+
+                    CALL DCOPY(N-NPANEL, A(1, N-NPANEL), 1, W(1, 1), 1)
+
+                W( N-NPANEL, 1 ) = ZERO
+                CALL DGEMV( 'N', N-NPANEL, WK, +ONE, A( 1, N-(WK-1)*STEP ), LDA*STEP, &
+                &W( N-NPANEL, NB-WK+1 ), LDW, ONE, W( 1, 1 ), 1 )
+                CALL DGEMV( 'N', N-NPANEL, WK, -ONE, W( 1, NB-WK+1 ), LDW, A( N-NPANEL, &
+                &N-(WK-1)*STEP ), LDA*STEP, ONE, W( 1, 1 ), 1 )
+                W( N-NPANEL, 1 ) = ZERO
+
+                WK = WK + 1
+                END IF
+
+                CALL DSKR2K( UPLO, "N", N-NPANEL, NB, ONE, A(1, N-(WK-1)*STEP), LDA*STEP, &
+                &W(1,1), LDW, ONE, A(1, 1), LDA)
+
+                A( N-NPANEL, N-NPANEL+1 ) = T
+            END IF
+
+        ELSE
+
+            WK = 0
+            DO 30 K=1, MIN(NPANEL, N-1)
+
+                KK = K+1
+
+                IF( K .GT. 1) THEN
+
+                IF( WK .GT. 0) THEN
+                    A( K, K ) = ZERO
+                    CALL DGEMV( 'N', N-K+1, WK, +ONE, A( K, 1 ), LDA*STEP, W( K, 1 ), LDW, ONE, A( K, K ), 1 )
+                    CALL DGEMV( 'N', N-K+1, WK, -ONE, W( K, 1 ), LDW, A( K, 1 ), LDA*STEP, ONE, A( K, K ), 1 )
+                    A( K, K ) = ZERO
+                END IF
+
+                IF( MOD(K, STEP) .EQ. 0 ) THEN
+                    WK = WK + 1
+                    CALL DCOPY(N-K+1, A(K, K), 1, W(K, WK), 1)
+                END IF
+                END IF
+
+                IF( MOD(K, STEP) .EQ. 1 .OR. STEP .EQ. 1) THEN
+                KP = K + IDAMAX(N-K, A( K+1, K ), 1)
+                COLMAX = ABS( A( KP, K ) )
+
+                IF( COLMAX.EQ.ZERO ) THEN
+                    IF( INFO.EQ.0 ) THEN
+                        INFO = K
+                    END IF
+                    KP = KK
+                END IF
+
+                IF( KP .NE. KK ) THEN
+                    IF( KP.LT.N ) THEN
+                        CALL DSWAP( N-KP, A( KP+1, KK ), 1, A( KP+1, KP ),1 )
+                    END IF
+
+                    CALL DSWAP( KP-KK-1, A( KK+1, KK ), 1, A( KP, KK+1 ), LDA )
+
+                    CALL DSWAP( K, A( KK, 1), LDA, A( KP, 1), LDA)
+
+                    CALL DSCAL( KP-KK, -ONE, A(KK+1, KK), 1 )
+                    CALL DSCAL( KP-KK-1, -ONE, A(KP, KK+1), LDA )
+
+                    CALL DSWAP( WK, W( KK, 1 ), LDW, W( KP, 1 ), LDW)
+                END IF
+
+                IF( COLMAX .NE. ZERO .AND. K .LE. N-2) THEN
+                    CALL DSCAL( N-K-1, ONE/A( K+1, K ), A(K+2, K), 1 )
+                END IF
+
+                IPIV( K+1 ) = KP
+
+                ELSE
+                IPIV(K+1) = K+1
+                END IF
+        30      CONTINUE
+
+
+            IF( NPANEL .LT. N-1) THEN
+                T = A( NPANEL+1, NPANEL )
+                A( NPANEL+1, NPANEL ) = ZERO
+
+                IF( WK .LT. NB) THEN
+                CALL DCOPY(N-NPANEL, A(NPANEL+1, NPANEL+1), 1, W(NPANEL+1, NB), 1)
+
+                W( NPANEL+1, NB ) = ZERO
+                CALL DGEMV( 'N', N-NPANEL, NB-1, +ONE, A( NPANEL+1, 1 ), LDA*STEP, &
+                &W( NPANEL+1, 1 ), LDW, ONE, W( NPANEL+1, NB ), 1 )
+                CALL DGEMV( 'N', N-NPANEL, NB-1, -ONE, W( NPANEL+1, 1 ), LDW, &
+                &A( NPANEL+1, 1 ), LDA*STEP, ONE, W( NPANEL+1, NB ), 1 )
+                W( NPANEL+1, NB ) = ZERO
+                END IF
+
+                CALL DSKR2K( UPLO, "N", N-NPANEL, NB, ONE, A(NPANEL+1,1), LDA*STEP, &
+                &W(NPANEL+1,1), LDW, ONE, A(NPANEL+1, NPANEL+1), LDA)
+
+                A(NPANEL+1, NPANEL)=T
+            END IF
+
+        END IF
+
+    end subroutine DLASKTRF
+
+    subroutine DSKTD2(UPLO, MODE, N, A, LDA, E, TAU, INFO )
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, N
+        DOUBLE PRECISION   E( * )
+        DOUBLE PRECISION   A( LDA, * ), TAU( * )
+
+        DOUBLE PRECISION   ONE, ZERO
+        PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0)
+        LOGICAL            UPPER, NORMAL
+        INTEGER            I, STEP
+        DOUBLE PRECISION   ALPHA, TAUI
+        EXTERNAL           XERBLA, DLARFG
+        LOGICAL            LSAME
+        EXTERNAL           LSAME
+        INTRINSIC          MAX, MIN
+
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        NORMAL = LSAME( MODE, 'N' )
+
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.NORMAL .AND. .NOT.LSAME( MODE, 'P' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( .NOT.NORMAL .AND. MOD(N,2).NE.0 ) THEN
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        END IF
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'DSKTD2', -INFO )
+            RETURN
+        END IF
+
+        IF( N.LE.0 ) RETURN
+        
+        IF( .NOT. NORMAL ) THEN
+            STEP = 2
+            
+            DO 5 I = 2, N-2, 2
+                TAU( I ) = ZERO
+        5       CONTINUE
+        ELSE
+            STEP = 1
+        END IF
+
+        IF( UPPER ) THEN
+            
+            A( N, N ) = ZERO
+            DO 10 I = N - 1, 1, -STEP
+                
+                ALPHA = A( I, I+1 )
+                CALL DLARFG( I, ALPHA, A( 1, I+1 ), 1, TAUI )
+                E( I ) = ALPHA
+                
+                IF( TAUI.NE.ZERO ) THEN
+                    
+                A( I, I+1 ) = ONE
+                
+                CALL DSKMV( UPLO, I, TAUI, A, LDA, A( 1, I+1 ),1, ZERO, TAU, 1 )
+        
+                CALL DSKR2( UPLO, I-STEP+1, ONE, A( 1, I+1 ), 1, TAU, 1, A, LDA )
+        
+                ELSE
+                A( I, I ) = ZERO
+                END IF
+                A( I, I+1 ) = E( I )
+                TAU( I ) = TAUI
+        10    CONTINUE
+        ELSE
+            
+            A( 1, 1 ) = ZERO
+            DO 20 I = 1, N - 1, STEP
+                
+                ALPHA = A( I+1, I )
+                CALL DLARFG( N-I, ALPHA, A( MIN( I+2, N ), I ), 1, TAUI )
+                E( I ) = ALPHA
+                
+                IF( TAUI.NE.ZERO ) THEN
+                    
+                A( I+1, I ) = ONE
+                
+                CALL DSKMV( UPLO, N-I, TAUI, A( I+1, I+1 ), LDA, A( I+1, I ), 1, ZERO, TAU( I ), 1 )
+        
+                CALL DSKR2( UPLO, N-I-STEP+1, ONE, A( I+STEP, I ), 1, TAU( I+STEP-1 ), 1, &
+                &A( I+STEP, I+STEP ), LDA )
+        
+                ELSE
+                A( I+1, I+1 ) = ZERO
+                END IF
+                A( I+1, I ) = E( I )
+                TAU( I ) = TAUI
+        20    CONTINUE
+        END IF
+        
+        RETURN
+
+
+    end subroutine DSKTD2
+
+    subroutine DLASKTRD(UPLO, MODE, N, NB, A, LDA, E, TAU, W, LDW)
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            LDA, LDW, N, NB
+        
+        DOUBLE PRECISION   E( * )
+        DOUBLE PRECISION   A( LDA, * ), TAU( * ), W( LDW, * )
+
+        DOUBLE PRECISION   ZERO, ONE
+        PARAMETER          ( ZERO = 0.0D+0, ONE = 1.0D+0)
+        
+        INTEGER            I, NW, NW2, STEP, NPANEL
+        DOUBLE PRECISION   ALPHA
+        
+        EXTERNAL           DGEMV, DLARFG
+        
+        LOGICAL            LSAME
+        EXTERNAL           LSAME
+        
+        INTRINSIC          MIN
+        
+        IF( N.LE.0 ) RETURN
+
+        IF( LSAME( MODE, 'P' ) ) THEN
+            STEP = 2
+        ELSE
+            STEP = 1
+        END IF
+        NPANEL = NB * STEP
+
+        IF( LSAME( UPLO, 'U' ) ) then
+
+            NW=0
+
+            DO 10 I = N, MAX(N - NPANEL + 1, 2), -1
+
+                NW2 = NW - MOD(I,STEP)
+                IF( NW2 .GT. 0 ) THEN
+                    
+                A( I, I ) = ZERO
+                CALL DGEMV( 'No transpose', I, NW2, +ONE, A( 1, N-(NW2-1)*STEP ), LDA*STEP, &
+                &W( I, NB-NW2+1 ), LDW, ONE, A( 1, I ), 1 )
+                CALL DGEMV( 'No transpose', I, NW2, -ONE, W( 1, NB-NW2+1 ), LDW, &
+                &A( I, N-(NW2-1)*STEP ), LDA*STEP, ONE, A( 1, I ), 1 )
+                A( I, I ) = ZERO
+                END IF
+
+                
+                IF( STEP.EQ.2 .AND. MOD( I, STEP ).EQ.1 ) THEN
+                TAU( I-1 ) = ZERO
+                GOTO 10
+                END IF
+
+                IF( I.GT.1 ) THEN
+                    
+                ALPHA = A( I-1, I )
+                CALL DLARFG( I-1, ALPHA, A( 1, I ), 1, TAU( I-1 ) )
+                E( I-1 ) = ALPHA
+                A( I-1, I ) = ONE
+                
+                CALL DSKMV( 'Upper', I-1, TAU(I-1), A, LDA, A( 1, I ), 1, ZERO, W( 1, NB-NW ), 1 )
+
+                IF( NW .GT. 0 ) THEN
+                    CALL DGEMV( 'Transpose', I-1, NW, ONE, W( 1, NB-NW+1 ), LDW, A( 1, I ), 1, &
+                    &ZERO, W( I+1, NB-NW ), 1 )
+                    CALL DGEMV( 'No transpose', I-1, NW, TAU(I-1), A( 1, N-(NW-1)*STEP ), LDA*STEP, &
+                    &W( I+1, NB-NW ), 1, ONE, W( 1, NB-NW ), 1)
+                    CALL DGEMV( 'Transpose', I-1, NW, ONE, A( 1, N-(NW-1)*STEP ), LDA*STEP, &
+                    &A( 1, I ), 1, ZERO, W( I+1, NB-NW ), 1 )
+                    CALL DGEMV( 'No transpose', I-1, NW, -TAU(I-1), W( 1, NB-NW+1 ), LDW, &
+                    &W( I+1, NB-NW ), 1, ONE, W( 1, NB-NW ), 1 )
+                END IF
+
+                
+                NW = NW + 1
+
+                END IF
+
+                
+
+        10    CONTINUE
+        ELSE
+            
+            NW = 0
+
+            DO 20 I = 1, MIN(NPANEL, N-1)
+                
+                NW2 = NW - MOD(I+1,STEP)
+                IF( NW2 .GT. 0 ) THEN
+                A( I, I ) = ZERO
+                CALL DGEMV( 'No transpose', N-I+1, NW2, +ONE, A( I, 1 ), LDA*STEP, W( I, 1 ), LDW, &
+                &ONE, A( I, I ), 1 )
+                CALL DGEMV( 'No transpose', N-I+1, NW2, -ONE, W( I, 1 ), LDW, A( I, 1 ), LDA*STEP, &
+                &ONE, A( I, I ), 1 )
+                A( I, I ) = ZERO
+                END IF
+
+                
+                IF( STEP.EQ.2 .AND. MOD( I, STEP ).EQ.0 ) THEN
+                TAU( I ) = ZERO
+                GOTO 20
+                END IF
+
+                IF( I.LT.N ) THEN
+                    
+                ALPHA = A( I+1, I )
+                CALL DLARFG( N-I, ALPHA, A( MIN( I+2, N ), I ), 1, TAU( I ) )
+                E( I ) = ALPHA
+                A( I+1, I ) = ONE
+                
+
+                CALL DSKMV( 'Lower', N-I, TAU( I ), A( I+1, I+1 ), LDA, A( I+1, I ), 1, &
+                &ZERO, W( I+1, NW+1 ), 1 )
+
+                IF( NW .GT. 0 ) THEN
+                    CALL DGEMV( 'Transpose', N-I, NW, ONE, W( I+1, 1 ), LDW, A( I+1, I ), 1, ZERO, &
+                    &W( 1, NW+1 ), 1 )
+                    CALL DGEMV( 'No transpose', N-I, NW, TAU( I ), A( I+1, 1 ), LDA*STEP, &
+                    &W( 1, NW+1 ), 1, ONE, W( I+1, NW+1 ), 1 )
+                    CALL DGEMV( 'Transpose', N-I, NW, ONE, A( I+1, 1 ), LDA*STEP, &
+                    &A( I+1, I ), 1, ZERO, W( 1, NW+1 ), 1 )
+                    CALL DGEMV( 'No transpose', N-I, NW, -TAU( I ), W( I+1, 1 ), LDW, &
+                    &W( 1, NW+1 ), 1, ONE, W( I+1, NW+1 ), 1 )
+                END IF
+
+                
+                NW = NW + 1
+                END IF
+                
+        20    CONTINUE
+        END IF
+        
+        RETURN
+
+    end subroutine DLASKTRD
+
+    subroutine DSKTF2(UPLO, MODE, N, A, LDA, IPIV, INFO )
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, N
+        
+        INTEGER            IPIV( * )
+        DOUBLE PRECISION   A( LDA, * )
+
+        DOUBLE PRECISION   ZERO, ONE
+        PARAMETER          ( ZERO = 0.0D+0, ONE = 1.0D+0 )
+        
+        LOGICAL            UPPER, NORMAL
+        INTEGER            K, KK, KP, STEP
+        DOUBLE PRECISION   COLMAX
+        
+        LOGICAL            LSAME
+        INTEGER            IDAMAX
+        EXTERNAL           LSAME, IDAMAX
+        
+        EXTERNAL           DSCAL, DSWAP, XERBLA
+        
+        INTRINSIC          ABS, MAX
+        
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        NORMAL = LSAME( MODE, 'N' )
+
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.NORMAL .AND. .NOT.LSAME( MODE, 'P' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( .NOT.NORMAL .AND. MOD(N,2).EQ.1 ) THEN
+            
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        END IF
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'DSKTF2', -INFO )
+            RETURN
+        END IF
+
+        
+        IF( N .EQ. 0 ) RETURN
+
+        IF( NORMAL ) THEN
+            STEP = 1
+        ELSE
+            STEP = 2
+        END IF
+
+        IF( UPPER ) THEN
+            
+            IPIV( N ) = N
+
+            DO 10 K=N, 2, -1
+                
+                IF( MOD(K, STEP) .EQ. 0) THEN
+                    
+                KP = IDAMAX(K-1, A( 1, K ), 1)
+                COLMAX = ABS( A( KP, K ) )
+
+                IF( COLMAX.EQ.ZERO ) THEN
+                    
+                    IF( INFO.EQ.0 ) THEN
+                        INFO = K - 1
+                    END IF
+                    KP = K-1
+                END IF
+
+                
+                KK = K-1
+
+                IF( KP .NE. KK ) THEN
+                    CALL DSWAP( KP-1, A( 1, KK ), 1, A( 1, KP ), 1)
+                    CALL DSWAP( KK-KP-1, A( KP+1, KK ), 1, A( KP, KP+1 ), LDA )
+
+                    CALL DSWAP( N-K+1, A( KK, K), LDA, A( KP, K), LDA)
+
+                    CALL DSCAL(KK-KP, -ONE, A(KP, KK), 1)
+                    CALL DSCAL(KK-KP-1, -ONE, A(KP, KP+1), LDA)
+                END IF
+
+                
+                IF( COLMAX .NE. ZERO ) THEN
+                    CALL DSKR2( UPLO, K-2, ONE/A( K-1,K ), A( 1, K ), 1, A( 1, K-1 ), 1, A( 1, 1 ), LDA )
+
+        
+                    CALL DSCAL(K-2, ONE/A( K-1, K ), A(1, K), 1)
+                END IF
+                
+                IPIV( K-1 ) = KP
+                ELSE
+                IPIV( K-1 ) = K-1
+                END IF
+        10      CONTINUE
+
+        ELSE
+            
+
+            IPIV( 1 ) = 1
+
+            DO 20 K=1, N-1
+                
+                IF( MOD(K, STEP).EQ.1 .OR. STEP.EQ.1 ) THEN
+                    
+                KP = K + IDAMAX(N-K, A( K+1, K ), 1)
+                COLMAX = ABS( A( KP, K ) )
+
+                IF( COLMAX.EQ.ZERO ) THEN
+                    
+                    IF( INFO.EQ.0 ) THEN
+                        INFO = K
+                    END IF
+                    KP = K+1
+                END IF
+
+                
+                KK = K+1
+
+                IF( KP .NE. KK ) THEN
+                    IF( KP.LT.N ) THEN
+                        CALL DSWAP( N-KP, A( KP+1, KK ), 1, A( KP+1, KP ),1 )
+                    END IF
+
+                    CALL DSWAP( KP-KK-1, A( KK+1, KK ), 1, A( KP, KK+1 ), LDA )
+
+                    CALL DSWAP( K, A( KK, 1), LDA, A( KP, 1), LDA)
+
+                    CALL DSCAL(KP-KK, -ONE, A(KK+1, KK), 1)
+                    CALL DSCAL(KP-KK-1, -ONE, A(KP, KK+1), LDA)
+                END IF
+
+                
+                IF( COLMAX .NE. ZERO .AND. K+2 .LE. N) THEN
+                    CALL DSKR2( UPLO, N-K-1, ONE/A( K+1,K ), A( K+2, K ), 1, A( K+2, K+1 ), &
+                    &1, A( K+2, K+2 ), LDA )
+
+        
+                    CALL DSCAL(N-K-1, ONE/A( K+1, K ), A(K+2, K), 1)
+                END IF
+
+                
+                IPIV( K+1 ) = KP
+                ELSE
+                IPIV( K+1 ) = K+1
+                END IF
+        20      CONTINUE
+
+        END IF
+
+    end subroutine DSKTF2
+
+    subroutine DSKTRF(UPLO, MODE, N, A, LDA, IPIV, WORK, LWORK, INFO)
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, LWORK, N
+        
+        INTEGER            IPIV( * )
+        DOUBLE PRECISION   A( LDA, * ), WORK( * )
+
+        LOGICAL            LQUERY, UPPER, NORMAL
+        INTEGER            IINFO, J, K, K2, PIV, LWKOPT, NB, NBMIN, NPANEL
+        
+        LOGICAL            LSAME
+        INTEGER            ILAENV
+        EXTERNAL           LSAME, ILAENV
+        
+        EXTERNAL           DSWAP, XERBLA
+        
+        INTRINSIC          MAX
+
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        NORMAL = LSAME( MODE, 'N' )
+        LQUERY = ( LWORK.EQ.-1 )
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.NORMAL .AND. .NOT.LSAME( MODE, 'P' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( .NOT.NORMAL .AND. MOD(N,2).EQ.1 ) THEN
+            
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        ELSE IF( LWORK.LT.1 .AND. .NOT.LQUERY ) THEN
+            INFO = -8
+        END IF
+        
+        IF( INFO.EQ.0 ) THEN
+            
+            NB = ILAENV( 1, 'DSYTRF', UPLO, N, -1, -1, -1 )
+            LWKOPT = N*NB
+            WORK( 1 ) = LWKOPT
+        END IF
+        
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'DSKTRF', -INFO )
+            RETURN
+        ELSE IF( LQUERY ) THEN
+            RETURN
+        END IF
+        
+        NBMIN=NB
+        IF( NB.GT.1 .AND. NB.LT.N ) THEN
+            IF( LWORK .LT. N*NB ) THEN
+                NB = MAX( LWORK / N, 1 )
+                NBMIN = MAX( 2, ILAENV( 2, 'DSYTRF', UPLO, N, -1, -1, -1 ) )
+            END IF
+        ELSE
+            NB = N
+        END IF
+
+        IF( NB.LT.NBMIN ) NB = N
+        
+
+        IF( N .EQ. 0 ) RETURN
+
+        IF( LSAME( MODE, 'N' ) ) THEN
+            NPANEL = NB
+        ELSE
+            NPANEL = MIN(NB*2, N)
+        END IF
+
+        IF( UPPER ) THEN
+            
+
+            IPIV( N ) = N
+            
+            DO 10 K = N, MAX(NPANEL,1), -NPANEL
+                
+                IF( K.GE.NPANEL*2 ) THEN
+                    
+                CALL DLASKTRF( UPLO, MODE, K, NB, A, LDA, IPIV, WORK, N, IINFO )
+
+                K2 = K-NPANEL
+                ELSE
+                    
+                PIV = IPIV( K )
+
+                CALL DSKTF2( UPLO, MODE, K, A, LDA, IPIV, IINFO )
+
+                IPIV( K ) = PIV
+
+                K2 = 1
+                END IF
+                
+                IF( INFO.EQ.0 .AND. IINFO.GT.0 ) INFO = IINFO
+
+                IF( K .LT. N ) THEN
+                DO 20 J=K-1, K2, -1
+                    CALL DSWAP( N-K, A( J, K+1 ), LDA, A( IPIV( J ), K+1 ), LDA )
+        20            CONTINUE
+                    END IF
+
+        10   CONTINUE
+        
+            ELSE
+                
+
+                IPIV( 1 ) = 1
+            
+        DO 30 K = 1, MIN(N-NPANEL+1, N-1), NPANEL
+            
+        IF( K.LE.N-NPANEL*2+1 ) THEN
+            
+            CALL DLASKTRF( UPLO, MODE, N-K+1, NB, A( K, K ), LDA, IPIV( K ), WORK, N, IINFO )
+
+            K2 = K + NPANEL
+        ELSE
+            
+            PIV = IPIV( K )
+
+            CALL DSKTF2( UPLO, MODE, N-K+1, A( K, K ), LDA, IPIV( K ), IINFO )
+
+            IPIV( K ) = PIV
+
+            K2 = N
+        END IF
+        
+        IF( INFO.EQ.0 .AND. IINFO.GT.0 ) INFO = IINFO + K - 1
+
+        DO 40 J = K+1, K2
+            IPIV( J ) = IPIV( J ) + K - 1
+        40         CONTINUE
+
+
+        IF( K .GT. 1 ) THEN
+            DO 50 J=K+1, K2
+                CALL DSWAP( K-1, A( J, 1 ), LDA, A( IPIV( J ), 1 ), LDA )
+        50            CONTINUE
+        END IF
+
+
+        30   CONTINUE
+
+        END IF
+
+        WORK( 1 ) = LWKOPT
+        RETURN
+
+    end subroutine DSKTRF
+
+    subroutine DSKTRD(UPLO, MODE, N, A, LDA, E, TAU, WORK, LWORK, INFO )
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, LWORK, N
+        
+        DOUBLE PRECISION   E( * )
+        DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+
+        DOUBLE PRECISION   ONE
+        PARAMETER          ( ONE = 1.0D+0 )
+        
+        LOGICAL            LQUERY, UPPER, NORMAL
+        INTEGER            I, IINFO, IWS, J, LDWORK, LWKOPT, NB, NBMIN, NX, STEP, NPANEL, NXPANEL
+        EXTERNAL           XERBLA
+        INTRINSIC          MAX
+        
+        LOGICAL            LSAME
+        INTEGER            ILAENV
+        EXTERNAL           LSAME, ILAENV
+        
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        NORMAL = LSAME( MODE, 'N' )
+
+        LQUERY = ( LWORK.EQ.-1 )
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.NORMAL .AND. .NOT.LSAME( MODE, 'P' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( .NOT.NORMAL .AND. MOD(N,2).NE.0 ) THEN
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        ELSE IF( LWORK.LT.1 .AND. .NOT.LQUERY ) THEN
+            INFO = -9
+        END IF
+        
+        IF( INFO.EQ.0 ) THEN
+            
+
+            NB = ILAENV( 1, 'DSYTRD', UPLO, N, -1, -1, -1 )
+            LWKOPT = N*NB
+            WORK( 1 ) = LWKOPT
+        END IF
+        
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'DSKTRD', -INFO )
+            RETURN
+        ELSE IF( LQUERY ) THEN
+            RETURN
+        END IF
+        
+        IF( N.EQ.0 ) THEN
+            WORK( 1 ) = 1
+            RETURN
+        END IF
+        
+        NX = N
+        IWS = 1
+        IF( NB.GT.1 .AND. NB.LT.N ) THEN
+            
+            NX = MAX( NB, ILAENV( 3, 'DSYTRD', UPLO, N, -1, -1, -1 ) )
+            IF( NX.LT.N ) THEN
+                
+                LDWORK = N
+                IWS = LDWORK*NB
+                IF( LWORK.LT.IWS ) THEN
+                    
+                NB = MAX( LWORK / LDWORK, 1 )
+                NBMIN = ILAENV( 2, 'DSYTRD', UPLO, N, -1, -1, -1 )
+                IF( NB.LT.NBMIN .OR. NB.LE.1 ) NX = N
+                END IF
+            ELSE
+                NX = N
+            END IF
+        ELSE
+            NB = 1
+        END IF
+
+        IF( .NOT.NORMAL ) THEN
+            STEP = 2
+        ELSE
+            STEP = 1
+        END IF
+
+        NPANEL = NB * STEP
+        NXPANEL = NX * STEP
+
+        IF( UPPER ) THEN
+            
+            DO 20 I = N, NXPANEL + NPANEL, -NPANEL
+                
+                CALL DLASKTRD( UPLO, MODE, I, NB, A, LDA, E, TAU, WORK, LDWORK )
+        
+                CALL DSKR2K( UPLO, 'No transpose', I-NPANEL, NB, ONE, A( 1, I-NPANEL+STEP ), LDA*STEP, &
+                &WORK, LDWORK, ONE, A, LDA )
+        
+                DO 10 J = I-NPANEL+1+STEP-1, I, STEP
+                A( J-1, J ) = E( J-1 )
+        10       CONTINUE
+        20    CONTINUE
+    
+            CALL DSKTD2( UPLO, MODE, I, A, LDA, E, TAU, IINFO )
+        ELSE
+            
+            DO 40 I = 1, N - NXPANEL, NPANEL
+                
+                CALL DLASKTRD( UPLO, MODE, N-I+1, NB, A( I, I ), LDA, E( I ), TAU( I ), WORK, LDWORK )
+        
+                CALL DSKR2K( UPLO, 'No transpose', N-I-NPANEL+1, NB, ONE, A( I+NPANEL, I ), LDA*STEP, &
+                &WORK( NPANEL+1 ), LDWORK, ONE, A( I+NPANEL, I+NPANEL ), LDA )
+        
+                DO 30 J = I, I + NPANEL - 1, STEP
+                A( J+1, J ) = E( J )
+        30       CONTINUE
+        40    CONTINUE
+    
+            CALL DSKTD2( UPLO, MODE, N-I+1, A( I, I ), LDA, E( I ), TAU( I ), IINFO )
+        END IF
+        
+        WORK( 1 ) = LWKOPT
+        RETURN
+
+    end subroutine DSKTRD
+
+    subroutine DSKPF10(UPLO, MTHD, N, A, LDA, PFAFF, IWORK, WORK, LWORK, INFO)
+        implicit none
+
+        CHARACTER          UPLO, MTHD
+        INTEGER            INFO, LDA, LWORK, N
+        
+        INTEGER            IWORK( * )
+        DOUBLE PRECISION   PFAFF( 2 )
+        DOUBLE PRECISION   A( LDA, * ), WORK( * )
+
+        DOUBLE PRECISION   ONE, ZERO
+        PARAMETER          ( ONE = 1.0D+0 )
+        PARAMETER          ( ZERO = 0.0D+0 )
+
+        INTEGER            I
+
+        LOGICAL            LQUERY, UPPER, LTL
+        
+        EXTERNAL           XERBLA
+        
+        LOGICAL            LSAME
+        EXTERNAL           LSAME
+
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        LTL = LSAME( MTHD, 'P' )
+        LQUERY = ( LWORK.EQ.-1 )
+
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.LTL .AND. .NOT.LSAME( MTHD, 'H' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        ELSE IF( LWORK.LT.1 .AND. .NOT.LQUERY ) THEN
+            INFO = -9
+        ELSE IF( MOD(N,2).NE.1 .AND. .NOT.LTL .AND. LWORK.LT.2*N-1 .AND. .NOT.LQUERY ) THEN
+            INFO = -9
+        END IF
+
+        IF( INFO.EQ.0 .AND. LQUERY) THEN
+            IF( MOD(N,2).EQ.1 ) THEN
+                WORK(1) = 1
+            ELSE IF( LTL ) THEN
+                
+                CALL DSKTRF( UPLO, "P", N, A, LDA, IWORK, WORK, LWORK, INFO )
+            ELSE
+                
+                CALL DSKTRD( UPLO, "P", N, A, LDA, WORK, WORK, WORK, LWORK, INFO)
+                WORK(1) = WORK(1) + 2*N - 2
+            END IF
+        END IF
+        
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'DSKPF10', -INFO )
+            RETURN
+        ELSE IF( LQUERY ) THEN
+            RETURN
+        END IF
+
+        PFAFF( 1 ) = ONE
+        PFAFF( 2 ) = ZERO
+
+        
+        IF( N.EQ.0 ) THEN
+            RETURN
+        ELSE IF( MOD(N,2).EQ.1 ) THEN
+            PFAFF( 1 ) = ZERO
+            RETURN
+        END IF
+
+        IF( LTL ) THEN
+            
+            CALL DSKTRF( UPLO, "P", N, A, LDA, IWORK, WORK, LWORK, INFO )
+
+            
+            IF( INFO .GT. 0 ) THEN
+                PFAFF( 1 ) = ZERO
+                PFAFF( 2 ) = ZERO
+                INFO = 0
+            ELSE
+                IF( UPPER ) THEN
+
+                DO 10 I = 1, N-1, 2
+                    CALL DMUL10( PFAFF, A( I, I+1 ) )
+
+                    
+                    IF( IWORK( I ) .NE. I ) PFAFF( 1 ) = -PFAFF( 1 )
+        10            CONTINUE
+
+                ELSE
+
+                DO 20 I = 1, N-1, 2
+                    CALL DMUL10( PFAFF, -A( I+1, I ) )
+
+                    
+                    IF( IWORK( I+1 ) .NE. I+1 ) PFAFF( 1 ) = -PFAFF( 1 )
+        20            CONTINUE
+
+                END IF
+            END IF
+        ELSE
+
+            
+            CALL DSKTRD(UPLO, "P", N, A, LDA, WORK(1), WORK(N), WORK( 2*N-1 ), LWORK-2*N+2, INFO)
+
+            IF( UPPER ) THEN
+                
+                DO 30 I = 1, N-1, 2
+                CALL DMUL10( PFAFF, WORK( I ) )
+
+                
+                IF (WORK( N-1+I ) .GT. ZERO) PFAFF( 1 ) = -PFAFF( 1 )
+        30         CONTINUE
+
+            ELSE
+
+                
+                DO 40 I = 1, N-1, 2
+                CALL DMUL10( PFAFF, -WORK( I ) )
+
+                
+                IF (WORK( N-1+I ) .GT. ZERO) PFAFF( 1 ) = -PFAFF( 1 )
+        40         CONTINUE
+
+            END IF
+
+            
+            WORK( 1 ) = WORK( 2*N-1 ) + 2*N-2
+        END IF
+
+        RETURN
+
+    end subroutine DSKPF10
 
     subroutine SSKMV(UPLO,N,ALPHA,A,LDA,X,INCX,BETA,Y,INCY)
         implicit none
@@ -3527,328 +5353,1588 @@ program PFAFFIAN
         RETURN
     end subroutine ALTPFAF
 
-    subroutine MAGCHAIN(NUM,ROTAXIS,theta,magB,NEWBETA)
+    subroutine ZSKMV(UPLO,N,ALPHA,A,LDA,X,INCX,BETA,Y,INCY)
+
         implicit none
 
-        integer :: NUM, i
-        real*8 :: theta, ROTAXIS(3), NEWBETA(3,NUM), magB, initheta, TOL
-
-        TOL = 0.000001 ! The tolerance for the "if" checks.
-
-        NEWBETA(:,:) = 0.d0
-
-        if (abs(ROTAXIS(1) - 1.0) < TOL .and. abs(ROTAXIS(2)) < TOL .and. abs(ROTAXIS(3)) < TOL) then
-
-            initheta = 0.d0
-
-            do i = 1, NUM
-                if (i == 1) then
-                    NEWBETA(1,i) = 0.0
-                    NEWBETA(2,i) = magB*SIN(initheta)
-                    NEWBETA(3,i) = magB*COS(initheta)
-                else
-                    NEWBETA(1,i) = 0.0
-                    NEWBETA(2,i) = magB*SIN(initheta + (i-1)*theta)
-                    NEWBETA(3,i) = magB*COS(initheta + (i-1)*theta)
-                endif
-            end do
-        else if (abs(ROTAXIS(1)) < TOL .and. abs(ROTAXIS(2) - 1.0) < TOL .and. abs(ROTAXIS(3)) < TOL) then
-
-            initheta = 0.d0
-
-            do i = 1, NUM
-                if (i == 1) then
-                    NEWBETA(1,i) = magB*COS(initheta)
-                    NEWBETA(2,i) = 0.0 
-                    NEWBETA(3,i) = magB*SIN(initheta)
-                else
-                    NEWBETA(1,i) = magB*COS(initheta + (i-1)*theta)
-                    NEWBETA(2,i) = 0.0
-                    NEWBETA(3,i) = magB*SIN(initheta + (i-1)*theta)
-                endif
-            end do
-        else if (abs(ROTAXIS(1)) < TOL .and. abs(ROTAXIS(2)) < TOL .and. abs(ROTAXIS(3) - 1.0) < TOL) then
-
-            initheta = 0.d0
-
-            do i = 1, NUM
-                if (i == 1) then
-                    NEWBETA(1,i) = magB*COS(initheta)
-                    NEWBETA(2,i) = magB*SIN(initheta)
-                    NEWBETA(3,i) = 0.0
-                else
-                    NEWBETA(1,i) = magB*COS(initheta + (i-1)*theta)
-                    NEWBETA(2,i) = magB*SIN(initheta + (i-1)*theta)
-                    NEWBETA(3,i) = 0.0
-                endif
-            end do
-        else
-            ! This is the case where we want to rotate B along an arbitrary axis.
-            print *, 'Invalid input for the magchain rotation axis.'
-
-        endif
-
-    end subroutine MAGCHAIN
-
-    subroutine HOPPS(RLATT,IRLATTMAX,R0,NUMCHEMTYPES,LHOPS,NUMT,CHEMTYPE,TPTS,PREFACTORS)
-        implicit none
-
-        integer :: NUMT, i, j, ITYPE, JTYPE, IRLATT, IRLATTMAX, CHEMTYPE(NUMT), NUMCHEMTYPES
-        real*8 :: TTPRIME(3), RPOINT(3), TPTS(3,NUMT), RLATT(3,IRLATTMAX), LHOPS(NUMCHEMTYPES,NUMCHEMTYPES), &
-        &PREFACTORS(NUMCHEMTYPES,NUMCHEMTYPES), NNDIS(NUMCHEMTYPES,NUMCHEMTYPES), expon, R0, TOL
-
-        TOL = 0.0001
-
-        open (1, file = 'hoppings.dat', action = 'read')
-        do i = 1, NUMCHEMTYPES
-            read(1,*) (LHOPS(i,j), j = 1, NUMCHEMTYPES)
-        end do
-        close(1)
+        DOUBLE COMPLEX ALPHA,BETA
+        INTEGER INCX,INCY,LDA,N
+        CHARACTER UPLO
         
-        do i = 1, NUMCHEMTYPES
-            do j = 1, NUMCHEMTYPES
-                if (LHOPS(i,j) /= LHOPS(j,i)) then
-                    print *, 'Wrong value inserted as hopping element.'
-                    print *, 'The', i,j, 'value is different from the', j,i, 'value.'
-                    call exit(123)
-                endif
-            end do
-        end do
+        DOUBLE COMPLEX A(LDA,*),X(*),Y(*)
 
-        ! This calculates the nearest-neighbour distance for each interaction
-        do ITYPE = 1, NUMCHEMTYPES
-            do JTYPE = 1, NUMCHEMTYPES
-                NNDIS(JTYPE,ITYPE) = 100000.0
-
-                do i = 1, NUMT
-                    do j = 1, NUMT
-
-                        if (CHEMTYPE(i) == ITYPE .and. CHEMTYPE(j) == JTYPE) then
-                            TTPRIME = TPTS(1:3,j) - TPTS(1:3,i)
-                            do IRLATT = 1, IRLATTMAX
-                                RPOINT = RLATT(1:3,IRLATT)
-
-                                if (NNDIS(JTYPE,ITYPE) > norm2(RPOINT+TTPRIME) .and. norm2(RPOINT+TTPRIME) > TOL) then
-                                    NNDIS(JTYPE,ITYPE) = norm2(RPOINT+TTPRIME)
-                                endif
-
-                            end do
-                        endif
-
-                    end do
-                end do
-    
-                expon = exp(-NNDIS(JTYPE,ITYPE)/R0)
-                PREFACTORS(JTYPE,ITYPE) = LHOPS(JTYPE,ITYPE)/expon ! This sets the prefactors to be entered in the Hamiltonian
-            end do
-        end do
-
-    end subroutine HOPPS
-
-    subroutine HAMPREP(NUMT,xPauli,yPauli,zPauli,IdentityPauli,chempot,E0,ULCN,nu,nuzero,BETA,DELTA,HAMILTONIANPREP)
-        implicit none
-        integer :: NUMT, i
-        real*8 :: chempot, E0(NUMT), ULCN(NUMT), nu(NUMT), nuzero(NUMT), BETA(3,NUMT)
-        complex*16 :: xPauli(2,2), yPauli(2,2), zPauli(2,2), IdentityPauli(2,2), helperham(2,2), DELTA(NUMT),&
-        & HAMILTONIANPREP(4*NUMT,4*NUMT)
-
-        HAMILTONIANPREP(:,:) = (0.0,0.0)
-
-        do i = 1, NUMT
-
-            helperham = (E0(i) - chempot + ULCN(i)*(nu(i) - nuzero(i)))*IdentityPauli -&
-            &BETA(1,i)*xPauli - BETA(2,i)*yPauli - BETA(3,i)*zPauli
-
-            HAMILTONIANPREP(i, i) = helperham(1,1)
-            HAMILTONIANPREP(i, i + NUMT) = helperham(1,2)
-            !HAMILTONIANPREP(i, i + 2*NUMT) = (0.0,0.0)
-            HAMILTONIANPREP(i, i + 3*NUMT) = DELTA(i)
-
-            HAMILTONIANPREP(i + NUMT, i) = helperham(2,1)
-            HAMILTONIANPREP(i + NUMT, i + NUMT) = helperham(2,2)
-            HAMILTONIANPREP(i + NUMT, i + 2*NUMT) = DELTA(i)
-            !HAMILTONIANPREP(i + NUMT, i + 3*NUMT) = (0.0,0.0)
-
-            !HAMILTONIANPREP(i + 2*NUMT, i) = (0.0,0.0)
-            HAMILTONIANPREP(i + 2*NUMT, i + NUMT) = CONJG(DELTA(i))
-            HAMILTONIANPREP(i + 2*NUMT, i + 2*NUMT) = -CONJG(helperham(1,1))
-            HAMILTONIANPREP(i + 2*NUMT, i + 3*NUMT) = CONJG(helperham(1,2))
-
-            HAMILTONIANPREP(i + 3*NUMT, i) = CONJG(DELTA(i))
-            !HAMILTONIANPREP(i + 3*NUMT, i + NUMT) = (0.0,0.0)
-            HAMILTONIANPREP(i + 3*NUMT, i + 2*NUMT) = CONJG(helperham(2,1))
-            HAMILTONIANPREP(i + 3*NUMT, i + 3*NUMT) = -CONJG(helperham(2,2))
-
-        end do
-
-    end subroutine HAMPREP
-
-    subroutine FINALHAM(kcounter,NUMK,HAMILTONIANPREP,EXPONS,HOPPVALS,NEIGHBNUM,JTYPE,MAXNEIGHB,NUMT,HAMILTONIAN)
-        implicit none
-        integer, intent(in) :: kcounter
-        integer :: NUMT, NUMK, i, jneighb, NEIGHBNUM(NUMT), MAXNEIGHB, JATOM, JTYPE(MAXNEIGHB,NUMT)
-        real*8 :: HOPPVALS(MAXNEIGHB,NUMT)
-        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT), HAMILTONIANPREP(4*NUMT,4*NUMT), EXPONS(NUMK,MAXNEIGHB,NUMT), term
-
-        HAMILTONIAN(:,:) = HAMILTONIANPREP(:,:)
-
-        do i = 1, NUMT
-            do jneighb = 1, NEIGHBNUM(i)
-
-                JATOM = JTYPE(jneighb,i)
-
-                term = EXPONS(kcounter,jneighb,i)*HOPPVALS(jneighb,i)
-
-                HAMILTONIAN(i,JATOM) = HAMILTONIAN(i,JATOM) + term
-                HAMILTONIAN(i + NUMT,JATOM + NUMT) = HAMILTONIAN(i + NUMT,JATOM + NUMT) + term
-                HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) = HAMILTONIAN(i + 2*NUMT,JATOM + 2*NUMT) - term
-                HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) = HAMILTONIAN(i + 3*NUMT,JATOM + 3*NUMT) - term
-
-            end do
-        end do
-
-    end subroutine FINALHAM
-
-    subroutine MAKEALPHA(NUMT,HAMILTONIAN,ALPHAMATRIX)
-        implicit none
-        integer :: NUMT, i, j
-        real :: ALPHAMATRIX(4*NUMT,4*NUMT)
-        complex*16 :: HAMILTONIAN(4*NUMT,4*NUMT)
-
-        do i = 1, NUMT
-            do j = 1, NUMT
-
-                ALPHAMATRIX(i, i) = 0.D0
-                ALPHAMATRIX(i, j + NUMT) = AIMAG(HAMILTONIAN(i, j + 3*NUMT))
-                ALPHAMATRIX(i, j + 2*NUMT) = AIMAG(HAMILTONIAN(i + NUMT, j)) - 0.5*REAL(HAMILTONIAN(i, j)+ &
-                &HAMILTONIAN(i + NUMT, j + NUMT))
-                ALPHAMATRIX(i, j + 3*NUMT) = REAL(HAMILTONIAN(i, j + NUMT) - HAMILTONIAN(i, j + 3*NUMT))
-
-                ALPHAMATRIX(i + NUMT, j) = -1.D0*ALPHAMATRIX(i, j + NUMT)
-                ALPHAMATRIX(i + NUMT, j + NUMT) = 0.D0
-                ALPHAMATRIX(i + NUMT, j + 2*NUMT) = -1.D0*REAL(HAMILTONIAN(i, j + NUMT) + HAMILTONIAN(i, j + 3*NUMT))
-                ALPHAMATRIX(i + NUMT, j + 3*NUMT) = AIMAG(HAMILTONIAN(i + NUMT, j)) + 0.5*REAL(HAMILTONIAN(i, j)+ &
-                &HAMILTONIAN(i + NUMT, j + NUMT))
-
-                ALPHAMATRIX(i + 2*NUMT, j) = -1.D0*ALPHAMATRIX(i, j + 2*NUMT)
-                ALPHAMATRIX(i + 2*NUMT, j + NUMT) = -1.0*ALPHAMATRIX(i + NUMT, j + 2*NUMT)
-                ALPHAMATRIX(i + 2*NUMT, j + 2*NUMT) = 0.D0
-                ALPHAMATRIX(i + 2*NUMT, j + 3*NUMT) = AIMAG(HAMILTONIAN(i, j + 3*NUMT)) + 0.5*REAL(HAMILTONIAN(i, j)- &
-                &HAMILTONIAN(i + NUMT, j + NUMT))
-
-                ALPHAMATRIX(i + 3*NUMT, j) = -1.D0*ALPHAMATRIX(i, j + 3*NUMT)
-                ALPHAMATRIX(i + 3*NUMT, j + NUMT) = -1.D0*ALPHAMATRIX(i + NUMT, j + 3*NUMT)
-                ALPHAMATRIX(i + 3*NUMT, j + 2*NUMT) = -1.D0*ALPHAMATRIX(i + 2*NUMT, j + 3*NUMT)
-                ALPHAMATRIX(i + 3*NUMT, j + 3*NUMT) = 0.D0
-
-            end do
-        end do
-
-    end subroutine MAKEALPHA
-
-    subroutine BZ(a,b,c,N_x,N_y,N_z,PI,KPTS,Ntot,b_1,b_2,b_3)
-        implicit none
-
-        integer :: N_x, N_y, N_z, Ntot, counter, i, j, k
-        real*8 :: a(3), b(3), c(3), b_1(3), b_2(3), b_3(3), flx, fly, flz, c_1, c_2, c_3
-        real*8, allocatable, dimension(:,:) :: KPTS
-        real*8 :: PI, volume
-        counter = 1
-		
-        volume = DOT_PRODUCT(a, CROSS_PRODUCT(b,c)) !The volume of the unit cell
-
-		!At this point we calculate the reciprocal space vectors.
-        b_1 = 2.0*PI*CROSS_PRODUCT(b,c)/volume
-        b_2 = 2.0*PI*CROSS_PRODUCT(c,a)/volume
-        b_3 = 2.0*PI*CROSS_PRODUCT(a,b)/volume
-
-        Ntot = N_x*N_y*N_z !The total number of different wavevectors in reciprocal space.
-
-        allocate(KPTS(3,Ntot))
+        DOUBLE COMPLEX ONE
+        PARAMETER (ONE= (1.0D+0,0.0D+0))
+        DOUBLE COMPLEX ZERO
+        PARAMETER (ZERO= (0.0D+0,0.0D+0))
         
-        flx = dfloat(N_x)
-        fly = dfloat(N_y)
-        flz = dfloat(N_z)
+        DOUBLE COMPLEX TEMP1,TEMP2
+        INTEGER I,INFO,IX,IY,J,JX,JY,KX,KY
         
-        c_1 = -flx/2.0+1.0
-                    
-        do i = 1, N_x
-            c_2 = -fly/2.0
-            do j = 1, N_y
-                c_3 = -flz/2.0
-                do k = 1, N_z
-                    
-                    KPTS(1, counter) = (b_1(1)*c_1)/flx + (b_2(1)*c_2)/fly + (b_3(1)*c_3)/flz
-                    KPTS(2, counter) = (b_1(2)*c_1)/flx + (b_2(2)*c_2)/fly + (b_3(2)*c_3)/flz
-                    KPTS(3, counter) = (b_1(3)*c_1)/flx + (b_2(3)*c_2)/fly + (b_3(3)*c_3)/flz
-                    counter = counter + 1
-                    c_3 = c_3 + 1.0
-                end do
-                c_2 = c_2 + 1.0
-            end do
-            c_1 = c_1 + 1.0
-        end do
+        LOGICAL LSAME
+        EXTERNAL LSAME
+        
+        EXTERNAL XERBLA
+        
+        INTRINSIC MAX
+        
+        INFO = 0
+        IF (.NOT.LSAME(UPLO,'U') .AND. .NOT.LSAME(UPLO,'L')) THEN
+            INFO = 1
+        ELSE IF (N.LT.0) THEN
+            INFO = 2
+        ELSE IF (LDA.LT.MAX(1,N)) THEN
+            INFO = 5
+        ELSE IF (INCX.EQ.0) THEN
+            INFO = 7
+        ELSE IF (INCY.EQ.0) THEN
+            INFO = 10
+        END IF
+        IF (INFO.NE.0) THEN
+            CALL XERBLA('ZHEMV ',INFO)
+            RETURN
+        END IF
+        
+        IF ((N.EQ.0) .OR. ((ALPHA.EQ.ZERO).AND. (BETA.EQ.ONE))) RETURN
+        
+        IF (INCX.GT.0) THEN
+            KX = 1
+        ELSE
+            KX = 1 - (N-1)*INCX
+        END IF
+        IF (INCY.GT.0) THEN
+            KY = 1
+        ELSE
+            KY = 1 - (N-1)*INCY
+        END IF
+        
+        IF (BETA.NE.ONE) THEN
+            IF (INCY.EQ.1) THEN
+                IF (BETA.EQ.ZERO) THEN
+                    DO 10 I = 1,N
+                        Y(I) = ZERO
+        10             CONTINUE
+                ELSE
+                    DO 20 I = 1,N
+                        Y(I) = BETA*Y(I)
+        20             CONTINUE
+                END IF
+            ELSE
+                IY = KY
+                IF (BETA.EQ.ZERO) THEN
+                    DO 30 I = 1,N
+                        Y(IY) = ZERO
+                        IY = IY + INCY
+        30             CONTINUE
+                ELSE
+                    DO 40 I = 1,N
+                        Y(IY) = BETA*Y(IY)
+                        IY = IY + INCY
+        40             CONTINUE
+                END IF
+            END IF
+        END IF
+        IF (ALPHA.EQ.ZERO) RETURN
+        IF (LSAME(UPLO,'U')) THEN
+            
+            IF ((INCX.EQ.1) .AND. (INCY.EQ.1)) THEN
+                DO 60 J = 1,N
+                    TEMP1 = ALPHA*X(J)
+                    TEMP2 = ZERO
+                    DO 50 I = 1,J - 1
+                        Y(I) = Y(I) + TEMP1*A(I,J)
+                        TEMP2 = TEMP2 - A(I,J)*X(I)
+        50             CONTINUE
+                    Y(J) = Y(J) + ALPHA*TEMP2
+        60         CONTINUE
+            ELSE
+                JX = KX
+                JY = KY
+                DO 80 J = 1,N
+                    TEMP1 = ALPHA*X(JX)
+                    TEMP2 = ZERO
+                    IX = KX
+                    IY = KY
+                    DO 70 I = 1,J - 1
+                        Y(IY) = Y(IY) + TEMP1*A(I,J)
+                        TEMP2 = TEMP2 - A(I,J)*X(IX)
+                        IX = IX + INCX
+                        IY = IY + INCY
+        70             CONTINUE
+                    Y(JY) = Y(JY) + ALPHA*TEMP2
+                    JX = JX + INCX
+                    JY = JY + INCY
+        80         CONTINUE
+            END IF
+        ELSE
+            
+            IF ((INCX.EQ.1) .AND. (INCY.EQ.1)) THEN
+                DO 100 J = 1,N
+                    TEMP1 = ALPHA*X(J)
+                    TEMP2 = ZERO
+                    DO 90 I = J + 1,N
+                        Y(I) = Y(I) + TEMP1*A(I,J)
+                        TEMP2 = TEMP2 - A(I,J)*X(I)
+        90             CONTINUE
+                    Y(J) = Y(J) + ALPHA*TEMP2
+        100         CONTINUE
+            ELSE
+                JX = KX
+                JY = KY
+                DO 120 J = 1,N
+                    TEMP1 = ALPHA*X(JX)
+                    TEMP2 = ZERO
+                    IX = JX
+                    IY = JY
+                    DO 110 I = J + 1,N
+                        IX = IX + INCX
+                        IY = IY + INCY
+                        Y(IY) = Y(IY) + TEMP1*A(I,J)
+                        TEMP2 = TEMP2 - A(I,J)*X(IX)
+        110             CONTINUE
+                    Y(JY) = Y(JY) + ALPHA*TEMP2
+                    JX = JX + INCX
+                    JY = JY + INCY
+        120         CONTINUE
+            END IF
+        END IF
+        
+        RETURN
+      
+    end subroutine ZSKMV
 
-    end subroutine BZ
+    subroutine ZSKR2K(UPLO,TRANS,N,K,ALPHA,A,LDA,B,LDB,BETA,C,LDC)
 
-    subroutine RPTS(a_1,a_2,a_3,NCELLS,RLATT,IRLATTMAX)
         implicit none
 
-        integer :: i,j,k,IRLATTMAX,counter,NCELLS
-        real*8 :: a_1(3), a_2(3), a_3(3)
-        real*8, allocatable, dimension(:,:) :: RLATT
-        counter = 1
+        DOUBLE COMPLEX ALPHA
+        DOUBLE COMPLEX BETA
+        INTEGER K,LDA,LDB,LDC,N
+        CHARACTER TRANS,UPLO
+        
+        DOUBLE COMPLEX A(LDA,*),B(LDB,*),C(LDC,*)
 
-        allocate(RLATT(3,IRLATTMAX))
+        LOGICAL LSAME
+        EXTERNAL LSAME
+        
+        EXTERNAL XERBLA
+        
+        INTRINSIC MAX
+        
+        DOUBLE COMPLEX TEMP1,TEMP2
+        INTEGER I,INFO,J,L,NROWA
+        LOGICAL UPPER
+        
+        DOUBLE COMPLEX ONE
+        PARAMETER (ONE= (1.0D+0,0.0D+0))
+        DOUBLE COMPLEX ZERO
+        PARAMETER (ZERO= (0.0D+0,0.0D+0))
+        
+        IF (LSAME(TRANS,'N')) THEN
+            NROWA = N
+        ELSE
+            NROWA = K
+        END IF
+        UPPER = LSAME(UPLO,'U')
+        
+        INFO = 0
+        IF ((.NOT.UPPER) .AND. (.NOT.LSAME(UPLO,'L'))) THEN
+            INFO = 1
+        ELSE IF ((.NOT.LSAME(TRANS,'N')) .AND. (.NOT.LSAME(TRANS,'T'))) THEN
+            INFO = 2
+        ELSE IF (N.LT.0) THEN
+            INFO = 3
+        ELSE IF (K.LT.0) THEN
+            INFO = 4
+        ELSE IF (LDA.LT.MAX(1,NROWA)) THEN
+            INFO = 7
+        ELSE IF (LDB.LT.MAX(1,NROWA)) THEN
+            INFO = 9
+        ELSE IF (LDC.LT.MAX(1,N)) THEN
+            INFO = 12
+        END IF
+        IF (INFO.NE.0) THEN
+            CALL XERBLA('ZSKR2K',INFO)
+            RETURN
+        END IF
+        
+        IF ((N.EQ.0) .OR. (((ALPHA.EQ.ZERO).OR. (K.EQ.0)).AND. (BETA.EQ.ONE))) RETURN
+        
+        IF (ALPHA.EQ.ZERO) THEN
+            IF (UPPER) THEN
+                IF (BETA.EQ.ZERO) THEN
+                    DO 20 J = 1,N
+                        DO 10 I = 1,J
+                            C(I,J) = ZERO
+        10                 CONTINUE
+        20             CONTINUE
+                ELSE
+                    DO 40 J = 1,N
+                        DO 30 I = 1,J - 1
+                            C(I,J) = BETA*C(I,J)
+        30                 CONTINUE
+                        C(J,J) = ZERO
+        40             CONTINUE
+                END IF
+            ELSE
+                IF (BETA.EQ.ZERO) THEN
+                    DO 60 J = 1,N
+                        DO 50 I = J,N
+                            C(I,J) = ZERO
+        50                 CONTINUE
+        60             CONTINUE
+                ELSE
+                    DO 80 J = 1,N
+                        C(J,J) = ZERO
+                        DO 70 I = J + 1,N
+                            C(I,J) = BETA*C(I,J)
+        70                 CONTINUE
+        80             CONTINUE
+                END IF
+            END IF
+            RETURN
+        END IF
+        
+        IF (LSAME(TRANS,'N')) THEN
+            
+            IF (UPPER) THEN
+                DO 130 J = 1,N
+                    IF (BETA.EQ.ZERO) THEN
+                        DO 90 I = 1,J
+                            C(I,J) = ZERO
+        90                 CONTINUE
+                    ELSE IF (BETA.NE.ONE) THEN
+                        DO 100 I = 1,J - 1
+                            C(I,J) = BETA*C(I,J)
+        100                 CONTINUE
+                        C(J,J) = ZERO
+                    ELSE
+                        C(J,J) = ZERO
+                    END IF
+                    DO 120 L = 1,K
+                        IF ((A(J,L).NE.ZERO) .OR. (B(J,L).NE.ZERO)) THEN
+                            TEMP1 = ALPHA*B(J,L)
+                            TEMP2 = ALPHA*A(J,L)
+                            DO 110 I = 1,J - 1
+                                C(I,J) = C(I,J) + A(I,L)*TEMP1 - B(I,L)*TEMP2
+        110                     CONTINUE
+                            C(J,J) = ZERO
+                        END IF
+        120             CONTINUE
+        130         CONTINUE
+            ELSE
+                DO 180 J = 1,N
+                    IF (BETA.EQ.ZERO) THEN
+                        DO 140 I = J,N
+                            C(I,J) = ZERO
+        140                 CONTINUE
+                    ELSE IF (BETA.NE.ONE) THEN
+                        DO 150 I = J + 1,N
+                            C(I,J) = BETA*C(I,J)
+        150                 CONTINUE
+                        C(J,J) = ZERO
+                    ELSE
+                        C(J,J) = ZERO
+                    END IF
+                    DO 170 L = 1,K
+                        IF ((A(J,L).NE.ZERO) .OR. (B(J,L).NE.ZERO)) THEN
+                            TEMP1 = ALPHA*B(J,L)
+                            TEMP2 = ALPHA*A(J,L)
+                            DO 160 I = J + 1,N
+                                C(I,J) = C(I,J) + A(I,L)*TEMP1 - B(I,L)*TEMP2
+        160                     CONTINUE
+                            C(J,J) = ZERO
+                        END IF
+        170             CONTINUE
+        180         CONTINUE
+            END IF
+        ELSE
+            
+            IF (UPPER) THEN
+                DO 210 J = 1,N
+                    DO 200 I = 1,J
+                        TEMP1 = ZERO
+                        TEMP2 = ZERO
+                        DO 190 L = 1,K
+                            TEMP1 = TEMP1 + A(L,I)*B(L,J)
+                            TEMP2 = TEMP2 + B(L,I)*A(L,J)
+        190                 CONTINUE
+                        IF (I.EQ.J) THEN
+                            C(J,J) = ZERO
+                        ELSE
+                            IF (BETA.EQ.ZERO) THEN
+                                C(I,J) = ALPHA*TEMP1 - ALPHA*TEMP2
+                            ELSE
+                                C(I,J) = BETA*C(I,J) + ALPHA*TEMP1 - ALPHA*TEMP2
+                            END IF
+                        END IF
+        200             CONTINUE
+        210         CONTINUE
+            ELSE
+                DO 240 J = 1,N
+                    DO 230 I = J,N
+                        TEMP1 = ZERO
+                        TEMP2 = ZERO
+                        DO 220 L = 1,K
+                            TEMP1 = TEMP1 + A(L,I)*B(L,J)
+                            TEMP2 = TEMP2 + B(L,I)*A(L,J)
+        220                 CONTINUE
+                        IF (I.EQ.J) THEN
+                            C(J,J) = ZERO
+                        ELSE
+                            IF (BETA.EQ.ZERO) THEN
+                                C(I,J) = ALPHA*TEMP1 - ALPHA*TEMP2
+                            ELSE
+                                C(I,J) = BETA*C(I,J) + ALPHA*TEMP1 - ALPHA*TEMP2
+                            END IF
+                        END IF
+        230             CONTINUE
+        240         CONTINUE
+            END IF
+        END IF
+        
+        RETURN
 
-        do i = -NCELLS,NCELLS
-            do j = -NCELLS,NCELLS
-                do k = -NCELLS,NCELLS
-                    RLATT(1:3,counter) = i*a_1 + j*a_2 + k*a_3
-                    counter = counter + 1
-                end do
-            end do
-        end do
+
+    end subroutine ZSKR2K
+
+    subroutine ZSKR2(UPLO,N,ALPHA,X,INCX,Y,INCY,A,LDA)
+
+        implicit none
+
+        DOUBLE COMPLEX ALPHA
+        INTEGER INCX,INCY,LDA,N
+        CHARACTER UPLO
+        
+        DOUBLE COMPLEX A(LDA,*),X(*),Y(*)
+
+        DOUBLE COMPLEX ZERO
+        PARAMETER (ZERO= (0.0D+0,0.0D+0))
+        
+        DOUBLE COMPLEX TEMP1,TEMP2
+        INTEGER I,INFO,IX,IY,J,JX,JY,KX,KY
+        
+        LOGICAL LSAME
+        EXTERNAL LSAME
+        
+        EXTERNAL XERBLA
+        
+        INTRINSIC MAX
+        
+        INFO = 0
+        IF (.NOT.LSAME(UPLO,'U') .AND. .NOT.LSAME(UPLO,'L')) THEN
+            INFO = 1
+        ELSE IF (N.LT.0) THEN
+            INFO = 2
+        ELSE IF (INCX.EQ.0) THEN
+            INFO = 5
+        ELSE IF (INCY.EQ.0) THEN
+            INFO = 7
+        ELSE IF (LDA.LT.MAX(1,N)) THEN
+            INFO = 9
+        END IF
+        IF (INFO.NE.0) THEN
+            CALL XERBLA('ZSKR2 ',INFO)
+            RETURN
+        END IF
+        
+        IF ((N.EQ.0) .OR. (ALPHA.EQ.ZERO)) RETURN
+        
+        IF ((INCX.NE.1) .OR. (INCY.NE.1)) THEN
+            IF (INCX.GT.0) THEN
+                KX = 1
+            ELSE
+                KX = 1 - (N-1)*INCX
+            END IF
+            IF (INCY.GT.0) THEN
+                KY = 1
+            ELSE
+                KY = 1 - (N-1)*INCY
+            END IF
+            JX = KX
+            JY = KY
+        END IF
+        
+        IF (LSAME(UPLO,'U')) THEN
+            
+            IF ((INCX.EQ.1) .AND. (INCY.EQ.1)) THEN
+                DO 20 J = 1,N
+                    IF ((X(J).NE.ZERO) .OR. (Y(J).NE.ZERO)) THEN
+                        TEMP1 = ALPHA*Y(J)
+                        TEMP2 = ALPHA*X(J)
+                        DO 10 I = 1,J - 1
+                            A(I,J) = A(I,J) + X(I)*TEMP1 - Y(I)*TEMP2
+        10                 CONTINUE
+                        A(J,J) = ZERO
+                    ELSE
+                        A(J,J) = ZERO
+                    END IF
+        20         CONTINUE
+            ELSE
+                DO 40 J = 1,N
+                    IF ((X(JX).NE.ZERO) .OR. (Y(JY).NE.ZERO)) THEN
+                        TEMP1 = ALPHA*Y(JY)
+                        TEMP2 = ALPHA*X(JX)
+                        IX = KX
+                        IY = KY
+                        DO 30 I = 1,J - 1
+                            A(I,J) = A(I,J) + X(IX)*TEMP1 - Y(IY)*TEMP2
+                            IX = IX + INCX
+                            IY = IY + INCY
+        30                 CONTINUE
+                        A(J,J) = ZERO
+                    ELSE
+                        A(J,J) = ZERO
+                    END IF
+                    JX = JX + INCX
+                    JY = JY + INCY
+        40         CONTINUE
+            END IF
+        ELSE
+            
+            IF ((INCX.EQ.1) .AND. (INCY.EQ.1)) THEN
+                DO 60 J = 1,N
+                    IF ((X(J).NE.ZERO) .OR. (Y(J).NE.ZERO)) THEN
+                        TEMP1 = ALPHA*Y(J)
+                        TEMP2 = ALPHA*X(J)
+                        A(J,J) = ZERO
+                        DO 50 I = J + 1,N
+                            A(I,J) = A(I,J) + X(I)*TEMP1 - Y(I)*TEMP2
+        50                 CONTINUE
+                    ELSE
+                        A(J,J) = ZERO
+                    END IF
+        60         CONTINUE
+            ELSE
+                DO 80 J = 1,N
+                    IF ((X(JX).NE.ZERO) .OR. (Y(JY).NE.ZERO)) THEN
+                        TEMP1 = ALPHA*Y(JY)
+                        TEMP2 = ALPHA*X(JX)
+                        A(J,J) = ZERO
+                        IX = JX
+                        IY = JY
+                        DO 70 I = J + 1,N
+                            IX = IX + INCX
+                            IY = IY + INCY
+                            A(I,J) = A(I,J) + X(IX)*TEMP1 - Y(IY)*TEMP2
+        70                 CONTINUE
+                    ELSE
+                        A(J,J) = ZERO
+                    END IF
+                    JX = JX + INCX
+                    JY = JY + INCY
+        80         CONTINUE
+            END IF
+        END IF
+        
+        RETURN        
+
+    end subroutine ZSKR2
+
+    subroutine ZLASKTRF(UPLO, MODE, N, NB, A, LDA, IPIV, W, LDW, INFO)
+
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, LDW, N, NB, STEP
+        
+        INTEGER            IPIV( * )
+        DOUBLE COMPLEX     A( LDA, * )
+        DOUBLE COMPLEX     W( LDW, * )
+
+        DOUBLE COMPLEX     ZERO, ONE
+        PARAMETER          ( ZERO = (0.0D+0, 0.0D+0), ONE = (1.0D+0,0.0D+0) )
+        
+        INTEGER            K, KK, KP, NPANEL, WK
+        DOUBLE PRECISION   COLMAX
+        DOUBLE COMPLEX     T
+        
+        LOGICAL            LSAME
+        INTEGER            IZAMAX
+        EXTERNAL           LSAME, IZAMAX
+        
+        EXTERNAL           ZSCAL, ZSWAP, ZCOPY, ZGEMV, XERBLA
+        
+        INTRINSIC          ABS, MAX
+        
+
+        INFO = 0
+
+        IF( LSAME( MODE, 'P' ) ) THEN
+            STEP = 2
+        ELSE
+            STEP = 1
+        END IF
+
+        
+        NPANEL = NB * STEP
+
+        IF( LSAME( UPLO, 'U' ) ) THEN
+            
+
+            WK = 0
+            DO 10 K=N, MAX(N-NPANEL+1, 2), -1
                 
-    end subroutine RPTS
+                
+                KK = K-1
 
-    subroutine CONSTANTS(s_0,s_1,s_2,s_3,CI,PI,KB) ! Sets some global constants
+                IF( K .LT. N) THEN
+
+                IF( WK .GT. 0 ) THEN
+                    A( K, K ) = ZERO
+                    CALL ZGEMV( 'N', K, WK, +ONE, A( 1, N-(WK-1)*STEP ), LDA*STEP, W( K, NB-WK+1 ), &
+                    &LDW, ONE, A( 1, K ), 1 )
+                    CALL ZGEMV( 'N', K, WK, -ONE, W( 1, NB-WK+1 ), LDW, A( K, N-(WK-1)*STEP ), &
+                    &LDA*STEP, ONE, A( 1, K ), 1 )
+                    A( K, K ) = ZERO
+                END IF
+
+                
+                IF( MOD(K, STEP).EQ.1 .OR. STEP.EQ.1 ) THEN
+                    WK = WK + 1
+                    CALL ZCOPY(K, A(1, K), 1, W(1, NB-WK+1 ), 1)
+                END IF
+                END IF
+
+                IF( MOD(K, STEP) .EQ. 0) THEN
+                    
+                KP = IZAMAX(K-1, A( 1, K ), 1)
+                COLMAX = ABS( A( KP, K ) )
+
+                IF( COLMAX.EQ.ZERO ) THEN
+                    
+                    IF( INFO.EQ.0 ) THEN
+                        INFO = K - 1
+                    END IF
+                    KP = KK
+                END IF
+                
+
+                IF( KP .NE. KK ) THEN
+                    CALL ZSWAP( KP-1, A( 1, KK ), 1, A( 1, KP ),1)
+                    CALL ZSWAP( KK-KP-1, A( KP+1, KK ), 1, A( KP, KP+1 ), LDA )
+
+                    CALL ZSWAP( N-K+1, A( KK, K), LDA, A( KP, K), LDA)
+
+                    CALL ZSCAL(KK-KP, -ONE, A(KP, KK), 1)
+                    CALL ZSCAL(KK-KP-1, -ONE, A(KP, KP+1), LDA)
+
+                    
+                    IF( WK .GT. 0 ) THEN
+                        CALL ZSWAP( WK, W( KK, NB-WK+1 ), LDW, W( KP, NB-WK+1 ), LDW)
+                    END IF
+                END IF
+
+                
+                IF( COLMAX .NE. ZERO ) THEN
+                    
+                    CALL ZSCAL(K-2, ONE/A( K-1, K ), A(1, K), 1)
+                END IF
+                
+                IPIV( K-1 ) = KP
+
+                ELSE
+                    
+                IPIV( K-1 ) = K-1
+                END IF
+        10      CONTINUE
+
+    
+            IF( N-NPANEL+1 .GT. 2 ) THEN
+
+                
+                T = A( N-NPANEL, N-NPANEL+1 )
+                A( N-NPANEL, N-NPANEL+1 ) = ZERO
+
+                IF( WK .LT. NB) THEN
+                    
+                CALL ZCOPY(N-NPANEL, A(1, N-NPANEL), 1, W(1, 1), 1)
+
+                W( N-NPANEL, 1 ) = ZERO
+                CALL ZGEMV( 'N', N-NPANEL, WK, +ONE, A( 1, N-(WK-1)*STEP ), LDA*STEP, &
+                &W( N-NPANEL, NB-WK+1 ), LDW, ONE, W( 1, 1 ), 1 )
+                CALL ZGEMV( 'N', N-NPANEL, WK, -ONE, W( 1, NB-WK+1 ), LDW, A( N-NPANEL, &
+                &N-(WK-1)*STEP ), LDA*STEP, ONE, W( 1, 1 ), 1 )
+                W( N-NPANEL, 1 ) = ZERO
+
+                WK = WK + 1
+                END IF
+
+                
+                CALL ZSKR2K( UPLO, "N", N-NPANEL, NB, ONE, A(1, N-(WK-1)*STEP), LDA*STEP, &
+                &W(1,1), LDW, ONE, A(1, 1), LDA)
+
+                A( N-NPANEL, N-NPANEL+1 ) = T
+            END IF
+
+        ELSE
+
+            WK = 0
+            DO 30 K=1, MIN(NPANEL, N-1)
+
+                
+                KK = K+1
+
+                IF( K .GT. 1) THEN
+
+                IF( WK .GT. 0) THEN
+                    A( K, K ) = ZERO
+                    CALL ZGEMV( 'N', N-K+1, WK, +ONE, A( K, 1 ), LDA*STEP, W( K, 1 ), LDW, ONE, A( K, K ), 1 )
+                    CALL ZGEMV( 'N', N-K+1, WK, -ONE, W( K, 1 ), LDW, A( K, 1 ), LDA*STEP, ONE, A( K, K ), 1 )
+                    A( K, K ) = ZERO
+                END IF
+
+                
+                IF( MOD(K, STEP) .EQ. 0 ) THEN
+                    WK = WK + 1
+                    CALL ZCOPY(N-K+1, A(K, K), 1, W(K, WK), 1)
+                END IF
+                END IF
+
+                IF( MOD(K, STEP) .EQ. 1 .OR. STEP .EQ. 1) THEN
+                    
+                KP = K + IZAMAX(N-K, A( K+1, K ), 1)
+                COLMAX = ABS( A( KP, K ) )
+
+                IF( COLMAX.EQ.ZERO ) THEN
+                    
+                    IF( INFO.EQ.0 ) THEN
+                        INFO = K
+                    END IF
+                    KP = KK
+                END IF
+                
+
+                IF( KP .NE. KK ) THEN
+                    IF( KP.LT.N ) THEN
+                        CALL ZSWAP( N-KP, A( KP+1, KK ), 1, A( KP+1, KP ),1 )
+                    END IF
+
+                    CALL ZSWAP( KP-KK-1, A( KK+1, KK ), 1, A( KP, KK+1 ), LDA )
+
+                    CALL ZSWAP( K, A( KK, 1), LDA, A( KP, 1), LDA)
+
+                    CALL ZSCAL( KP-KK, -ONE, A(KK+1, KK), 1 )
+                    CALL ZSCAL( KP-KK-1, -ONE, A(KP, KK+1), LDA )
+
+                    
+                    CALL ZSWAP( WK, W( KK, 1 ), LDW, W( KP, 1 ), LDW)
+                END IF
+
+                
+                IF( COLMAX .NE. ZERO .AND. K .LE. N-2) THEN
+                    
+                    CALL ZSCAL( N-K-1, ONE/A( K+1, K ), A(K+2, K), 1 )
+                END IF
+
+                
+                IPIV( K+1 ) = KP
+
+                ELSE
+                    
+                IPIV(K+1) = K+1
+                END IF
+        30      CONTINUE
+    
+
+            IF( NPANEL .LT. N-1) THEN
+                
+                T = A( NPANEL+1, NPANEL )
+                A( NPANEL+1, NPANEL ) = ZERO
+
+                IF( WK .LT. NB) THEN
+                    
+                CALL ZCOPY(N-NPANEL, A(NPANEL+1, NPANEL+1), 1, W(NPANEL+1, NB), 1)
+
+                W( NPANEL+1, NB ) = ZERO
+                CALL ZGEMV( 'N', N-NPANEL, NB-1, +ONE, A( NPANEL+1, 1 ), LDA*STEP, &
+                &W( NPANEL+1, 1 ), LDW, ONE, W( NPANEL+1, NB ), 1 )
+                CALL ZGEMV( 'N', N-NPANEL, NB-1, -ONE, W( NPANEL+1, 1 ), LDW, A( NPANEL+1, 1 ), &
+                &LDA*STEP, ONE, W( NPANEL+1, NB ), 1 )
+                W( NPANEL+1, NB ) = ZERO
+                END IF
+
+                CALL ZSKR2K( UPLO, "N", N-NPANEL, NB, ONE, A(NPANEL+1,1), LDA*STEP, W(NPANEL+1,1), &
+                &LDW, ONE, A(NPANEL+1, NPANEL+1), LDA)
+
+                A(NPANEL+1, NPANEL)=T
+            END IF
+
+        END IF
+
+    end subroutine ZLASKTRF
+
+    subroutine ZSKTD2(UPLO, MODE, N, A, LDA, E, TAU, INFO )
+
         implicit none
-        complex*16 :: s_0(2,2), s_1(2,2), s_2(2,2), s_3(2,2), CI
-        real*8 :: PI, KB
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, N
         
-        s_0(1,1) = (1.0,0.0)
-        s_0(1,2) = (0.0,0.0)
-        s_0(2,1) = (0.0,0.0)
-        s_0(2,2) = (1.0,0.0)
-        s_1(1,1) = (0.0,0.0)
-        s_1(1,2) = (1.0,0.0)
-        s_1(2,1) = (1.0,0.0)
-        s_1(2,2) = (0.0,0.0)
-        s_2(1,1) = (0.0,0.0)
-        s_2(1,2) = (0.0,-1.0)
-        s_2(2,1) = (0.0,1.0)
-        s_2(2,2) = (0.0,0.0)
-        s_3(1,1) = (1.0,0.0)
-        s_3(1,2) = (0.0,0.0)
-        s_3(2,1) = (0.0,0.0)
-        s_3(2,2) = (-1.0,0.0)
+        DOUBLE PRECISION   E( * )
+        DOUBLE COMPLEX     A( LDA, * ), TAU( * )
 
-        CI = (0.0,1.0) ! setting the imaginary unit
-        PI = 4.D0*atan(1.D0) ! setting π
-        KB = 1.0 ! The value in eVs is 8.617385D-5
+        DOUBLE COMPLEX     ONE, ZERO
+        PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ), ZERO = ( 0.0D+0, 0.0D+0 ))
+        
+        LOGICAL            UPPER, NORMAL
+        INTEGER            I, K, STEP
+        DOUBLE COMPLEX     ALPHA, TAUI
+        
+        EXTERNAL           XERBLA, ZLARFG
+        
+        LOGICAL            LSAME
+        EXTERNAL           LSAME
+        
+        INTRINSIC          MAX, MIN, CONJG
+        
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        NORMAL = LSAME( MODE, 'N' )
 
-    end subroutine CONSTANTS
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.NORMAL .AND. .NOT.LSAME( MODE, 'P' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( .NOT.NORMAL .AND. MOD(N,2).NE.0 ) THEN
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        END IF
 
-    function CROSS_PRODUCT(x,y) result(cross)
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'ZSKTD2', -INFO )
+            RETURN
+        END IF
+        
+        IF( N.LE.0 ) RETURN
+        
+        IF( .NOT. NORMAL ) THEN
+            STEP = 2
+            
+            DO 5 I = 2, N-2, 2
+                TAU( I ) = ZERO
+        5       CONTINUE
+        ELSE
+            STEP = 1
+        END IF
+
+        IF( UPPER ) THEN
+            
+            A( N, N ) = ZERO
+            DO 10 I = N - 1, 1, -STEP
+                
+                ALPHA = A( I, I+1 )
+                CALL ZLARFG( I, ALPHA, A( 1, I+1 ), 1, TAUI )
+                E( I ) = ALPHA
+                
+                IF( TAUI.NE.ZERO ) THEN
+                    
+                A( I, I+1 ) = ONE
+                
+                DO 12 K = 1, I
+                    A( K, I+1 ) = CONJG(A( K, I+1 ))
+        12            CONTINUE
+    
+                CALL ZSKMV( UPLO, I, CONJG(TAUI), A, LDA, A( 1, I+1 ),1, ZERO, TAU, 1 )
+
+                DO 15 K = 1, I
+                    A( K, I+1 ) = CONJG(A( K, I+1 ))
+        15            CONTINUE
+
+    
+                CALL ZSKR2( UPLO, I-STEP+1, ONE, A( 1, I+1 ), 1, TAU, 1, A, LDA )
+        
+                ELSE
+                A( I, I ) = ZERO
+                END IF
+                A( I, I+1 ) = E( I )
+                TAU( I ) = TAUI
+        10    CONTINUE
+        ELSE
+            
+            A( 1, 1 ) = ZERO
+            DO 20 I = 1, N - 1, STEP
+                
+                ALPHA = A( I+1, I )
+                CALL ZLARFG( N-I, ALPHA, A( MIN( I+2, N ), I ), 1, TAUI )
+                E( I ) = ALPHA
+                
+                IF( TAUI.NE.ZERO ) THEN
+                    
+                A( I+1, I ) = ONE
+                
+                DO 30 K = I+2, N
+                    A( K, I ) = CONJG(A( K, I ))
+        30          CONTINUE
+
+                CALL ZSKMV( UPLO, N-I, CONJG(TAUI), A( I+1, I+1 ), LDA, A( I+1, I ), 1, ZERO, TAU( I ), 1 )
+        
+                DO 40 K = I+2, N
+                    A( K, I ) = CONJG(A( K, I ))
+        40          CONTINUE
+
+    
+                IF( I.LT.N-1 ) THEN
+                    CALL ZSKR2( UPLO, N-I-STEP+1, ONE, A( I+STEP, I ), 1, TAU( I+STEP-1 ), 1, &
+                    &A( I+STEP, I+STEP ), LDA )
+                END IF
+                
+                ELSE
+                A( I+1, I+1 ) = ZERO
+                END IF
+                A( I+1, I ) = E( I )
+                TAU( I ) = TAUI
+        20    CONTINUE
+        END IF
+        
+        RETURN
+
+    end subroutine ZSKTD2
+
+    subroutine ZLASKTRD(UPLO, MODE, N, NB, A, LDA, E, TAU, W, LDW)
+
         implicit none
-        real*8, dimension(3), intent(in) :: x, y
-        real*8, dimension(3) :: cross
 
-        cross(1) = x(2)*y(3) - x(3)*y(2)
-        cross(2) = x(3)*y(1) - x(1)*y(3)
-        cross(3) = x(1)*y(2) - x(2)*y(1)
-		
-    end function CROSS_PRODUCT
+        CHARACTER          UPLO, MODE
+        INTEGER            LDA, LDW, N, NB
+        
+        DOUBLE PRECISION   E( * )
+        DOUBLE COMPLEX     A( LDA, * ), TAU( * ), W( LDW, * )
+
+        DOUBLE COMPLEX     ZERO, ONE
+        PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ), ONE = ( 1.0D+0, 0.0D+0 ))
+        
+        INTEGER            I, NW, NW2, STEP, NPANEL
+        DOUBLE COMPLEX     ALPHA
+        
+        EXTERNAL           ZGEMV, ZLACGV, ZLARFG
+        
+        LOGICAL            LSAME
+        EXTERNAL           LSAME
+        
+        INTRINSIC          MIN, CONJG
+        
+        IF( N.LE.0 ) RETURN
+        
+
+        IF( LSAME( MODE, 'P' ) ) THEN
+            STEP = 2
+        ELSE
+            STEP = 1
+        END IF
+        NPANEL = NB * STEP
+
+        IF( LSAME( UPLO, 'U' ) ) THEN
+            
+            NW=0
+
+            DO 10 I = N, MAX(N - NPANEL + 1, 2), -1
+
+                NW2 = NW - MOD(I,STEP)
+                IF( NW2 .GT. 0 ) THEN
+                    
+                A( I, I ) = ZERO
+                CALL ZGEMV( 'No transpose', I, NW2, +ONE, A( 1, N-(NW2-1)*STEP ), &
+                &LDA*STEP, W( I, NB-NW2+1 ), LDW, ONE, A( 1, I ), 1 )
+                CALL ZGEMV( 'No transpose', I, NW2, -ONE, W( 1, NB-NW2+1 ), LDW, &
+                &A( I, N-(NW2-1)*STEP ), LDA*STEP, ONE, A( 1, I ), 1 )
+                A( I, I ) = ZERO
+                END IF
+
+                
+                IF( STEP.EQ.2 .AND. MOD( I, STEP ).EQ.1 ) THEN
+                TAU( I-1 ) = ZERO
+                GOTO 10
+                END IF
+
+                IF( I.GT.1 ) THEN
+                    
+                ALPHA = A( I-1, I )
+                CALL ZLARFG( I-1, ALPHA, A( 1, I ), 1, TAU( I-1 ) )
+                E( I-1 ) = ALPHA
+                A( I-1, I ) = ONE
+                
+                CALL ZLACGV( I-1, A( 1, I ), 1)
+
+                CALL ZSKMV( 'Upper', I-1, CONJG(TAU(I-1)), A, LDA, A( 1, I ), 1, ZERO, W( 1, NB-NW ), 1 )
+                IF( NW .GT. 0 ) THEN
+                    CALL ZGEMV( 'Transpose', I-1, NW, ONE, W( 1, NB-NW+1 ), LDW, &
+                    &A( 1, I ), 1, ZERO, W( I+1, NB-NW ), 1 )
+                    CALL ZGEMV( 'No transpose', I-1, NW, CONJG(TAU(I-1)), A( 1, N-(NW-1)*STEP ), &
+                    &LDA*STEP, W( I+1, NB-NW ), 1, ONE, W( 1, NB-NW ), 1 )
+                    CALL ZGEMV( 'Transpose', I-1, NW, ONE, A( 1, N-(NW-1)*STEP ), LDA*STEP, &
+                    &A( 1, I ), 1, ZERO, W( I+1, NB-NW ), 1 )
+                    CALL ZGEMV( 'No transpose', I-1, NW, -CONJG(TAU(I-1)), W( 1, NB-NW+1 ), &
+                    &LDW, W( I+1, NB-NW ), 1, ONE, W( 1, NB-NW ), 1 )
+                END IF
+
+                
+                CALL ZLACGV( I-1, A( 1, I ), 1)
+
+                
+                NW = NW + 1
+
+                END IF
+
+        10    CONTINUE
+        ELSE
+            
+            NW = 0
+
+            DO 20 I = 1, MIN(NPANEL, N-1)
+                
+                NW2 = NW - MOD(I+1,STEP)
+                IF( NW2 .GT. 0 ) THEN
+                A( I, I ) = ZERO
+                CALL ZGEMV( 'No transpose', N-I+1, NW2, +ONE, A( I, 1 ), &
+                &LDA*STEP, W( I, 1 ), LDW, ONE, A( I, I ), 1 )
+                CALL ZGEMV( 'No transpose', N-I+1, NW2, -ONE, W( I, 1 ), &
+                &LDW, A( I, 1 ), LDA*STEP, ONE, A( I, I ), 1 )
+                A( I, I ) = ZERO
+                END IF
+
+                
+                IF( STEP.EQ.2 .AND. MOD( I, STEP ).EQ.0 ) THEN
+                TAU( I ) = ZERO
+                GOTO 20
+                END IF
+
+                IF( I.LT.N ) THEN
+                    
+                ALPHA = A( I+1, I )
+                CALL ZLARFG( N-I, ALPHA, A( MIN( I+2, N ), I ), 1, TAU( I ) )
+                E( I ) = ALPHA
+                A( I+1, I ) = ONE
+                
+                CALL ZLACGV( N-I, A( I+1, I ), 1 )
+
+                CALL ZSKMV( 'Lower', N-I, CONJG(TAU( I )), A( I+1, I+1 ), LDA, A( I+1, I ), &
+                &1, ZERO, W( I+1, NW+1 ), 1 )
+                IF( NW .GT. 0 ) THEN
+                    CALL ZGEMV( 'Transpose', N-I, NW, ONE, W( I+1, 1 ), LDW, A( I+1, I ), &
+                    &1, ZERO, W( 1, NW+1 ), 1 )
+                    CALL ZGEMV( 'No transpose', N-I, NW, CONJG(TAU( I )), A( I+1, 1 ), &
+                    &LDA*STEP, W( 1, NW+1 ), 1, ONE, W( I+1, NW+1 ), 1 )
+                    CALL ZGEMV( 'Transpose', N-I, NW, ONE, A( I+1, 1 ), LDA*STEP, &
+                    &A( I+1, I ), 1, ZERO, W( 1, NW+1 ), 1 )
+                    CALL ZGEMV( 'No transpose', N-I, NW, -CONJG(TAU( I )), W( I+1, 1 ), &
+                    &LDW, W( 1, NW+1 ), 1, ONE, W( I+1, NW+1 ), 1 )
+                END IF
+
+                
+                CALL ZLACGV( N-I, A( I+1, I ), 1 )
+
+                
+                NW = NW + 1
+                END IF
+                
+        20    CONTINUE
+        END IF
+        
+        RETURN
+
+    end subroutine ZLASKTRD
+
+    subroutine ZSKTF2(UPLO, MODE, N, A, LDA, IPIV, INFO )
+
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, N
+        
+        INTEGER            IPIV( * )
+        DOUBLE COMPLEX     A( LDA, * )
+
+        DOUBLE COMPLEX     ZERO, ONE
+        PARAMETER          ( ZERO = (0.0D+0, 0.0D+0), ONE = (1.0D+0, 0.0D+0) )
+
+        LOGICAL            UPPER, NORMAL
+        INTEGER            K, KK, KP, STEP
+        DOUBLE PRECISION   COLMAX
+        
+        LOGICAL            LSAME
+        INTEGER            IZAMAX
+        EXTERNAL           LSAME, IZAMAX
+        
+        EXTERNAL           ZSCAL, ZSWAP, XERBLA
+        
+        INTRINSIC          ABS, MAX, SQRT
+        
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        NORMAL = LSAME( MODE, 'N' )
+
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.NORMAL .AND. .NOT.LSAME( MODE, 'P' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( .NOT.NORMAL .AND. MOD(N,2).EQ.1 ) THEN
+            
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        END IF
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'ZSKTF2', -INFO )
+            RETURN
+        END IF
+
+        
+        IF( N .EQ. 0 ) RETURN
+
+        IF( NORMAL ) THEN
+            STEP = 1
+        ELSE
+            STEP = 2
+        END IF
+
+        IF( UPPER ) THEN
+            
+            IPIV( N ) = N
+
+            DO 10 K=N, 2, -1
+                
+                IF( MOD(K, STEP) .EQ. 0) THEN
+                    
+                KP = IZAMAX(K-1, A( 1, K ), 1)
+                COLMAX = ABS( A( KP, K ) )
+
+                IF( COLMAX.EQ.ZERO ) THEN
+                    
+                    IF( INFO.EQ.0 ) THEN
+                        INFO = K - 1
+                    END IF
+                    KP = K-1
+                END IF
+
+                
+                KK = K-1
+
+                IF( KP .NE. KK ) THEN
+                    CALL ZSWAP( KP-1, A( 1, KK ), 1, A( 1, KP ), 1)
+                    CALL ZSWAP( KK-KP-1, A( KP+1, KK ), 1, A( KP, KP+1 ), LDA )
+
+                    CALL ZSWAP( N-K+1, A( KK, K), LDA, A( KP, K), LDA)
+
+                    CALL ZSCAL(KK-KP, -ONE, A(KP, KK), 1)
+                    CALL ZSCAL(KK-KP-1, -ONE, A(KP, KP+1), LDA)
+                END IF
+
+                
+                IF( COLMAX .NE. ZERO ) THEN
+                    CALL ZSKR2( UPLO, K-2, ONE/A( K-1,K ), A( 1, K ), 1, A( 1, K-1 ), 1, A( 1, 1 ), LDA )
+
+        
+                    CALL ZSCAL(K-2, ONE/A( K-1, K ), A(1, K), 1)
+                END IF
+                
+                IPIV( K-1 ) = KP
+                ELSE
+                IPIV( K-1 ) = K-1
+                END IF
+        10      CONTINUE
+
+        ELSE
+            
+
+            IPIV( 1 ) = 1
+
+            DO 20 K=1, N-1
+                
+                IF( MOD(K, STEP).EQ.1 .OR. STEP.EQ.1 ) THEN
+                    
+                KP = K + IZAMAX(N-K, A( K+1, K ), 1)
+                COLMAX = ABS( A( KP, K ) )
+
+                IF( COLMAX.EQ.ZERO ) THEN
+                    
+                    IF( INFO.EQ.0 ) THEN
+                        INFO = K
+                    END IF
+                    KP = K+1
+                END IF
+
+                
+                KK = K+1
+
+                IF( KP .NE. KK ) THEN
+                    IF( KP.LT.N ) THEN
+                        CALL ZSWAP( N-KP, A( KP+1, KK ), 1, A( KP+1, KP ),1 )
+                    END IF
+
+                    CALL ZSWAP( KP-KK-1, A( KK+1, KK ), 1, A( KP, KK+1 ), LDA )
+
+                    CALL ZSWAP( K, A( KK, 1), LDA, A( KP, 1), LDA)
+
+                    CALL ZSCAL(KP-KK, -ONE, A(KK+1, KK), 1)
+                    CALL ZSCAL(KP-KK-1, -ONE, A(KP, KK+1), LDA)
+                END IF
+
+                
+                IF( COLMAX .NE. ZERO .AND. K+2 .LE. N) THEN
+                    CALL ZSKR2( UPLO, N-K-1, ONE/A( K+1,K ), A( K+2, K ), 1, &
+                    &A( K+2, K+1 ), 1, A( K+2, K+2 ), LDA )
+
+        
+                    CALL ZSCAL(N-K-1, ONE/A( K+1, K ), A(K+2, K), 1)
+                END IF
+
+                
+                IPIV( K+1 ) = KP
+                ELSE
+                IPIV( K+1 ) = K+1
+                END IF
+        20      CONTINUE
+
+        END IF
+
+    end subroutine ZSKTF2
+
+    subroutine ZSKTRF(UPLO, MODE, N, A, LDA, IPIV, WORK, LWORK, INFO)
+
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, LWORK, N
+        
+        INTEGER            IPIV( * )
+        DOUBLE COMPLEX     A( LDA, * ), WORK( * )
+
+        LOGICAL            LQUERY, UPPER, NORMAL
+        INTEGER            IINFO, J, K, K2, PIV, LWKOPT, NB, NBMIN, NPANEL
+        
+        LOGICAL            LSAME
+        INTEGER            ILAENV
+        EXTERNAL           LSAME, ILAENV
+        
+        EXTERNAL           ZSWAP, XERBLA
+        
+        INTRINSIC          MAX
+        
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        NORMAL = LSAME( MODE, 'N' )
+        LQUERY = ( LWORK.EQ.-1 )
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.NORMAL .AND. .NOT.LSAME( MODE, 'P' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( .NOT.NORMAL .AND. MOD(N,2).EQ.1 ) THEN
+            
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        ELSE IF( LWORK.LT.1 .AND. .NOT.LQUERY ) THEN
+            INFO = -8
+        END IF
+        
+
+        IF( INFO.EQ.0 ) THEN
+            
+            NB = ILAENV( 1, 'ZHETRF', UPLO, N, -1, -1, -1 )
+            LWKOPT = N*NB
+            WORK( 1 ) = LWKOPT
+        END IF
+        
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'ZSKTRF', -INFO )
+            RETURN
+        ELSE IF( LQUERY ) THEN
+            RETURN
+        END IF
+        
+
+        NBMIN=NB
+        IF( NB.GT.1 .AND. NB.LT.N ) THEN
+            IF( LWORK .LT. N*NB ) THEN
+                NB = MAX( LWORK / N, 1 )
+                NBMIN = MAX( 2, ILAENV( 2, 'ZHETRF', UPLO, N, -1, -1, -1 ) )
+            END IF
+        ELSE
+            NB = N
+        END IF
+
+        IF( NB.LT.NBMIN ) NB = N
+        
+        IF( N .EQ. 0 ) RETURN
+
+        IF( LSAME( MODE, 'N' ) ) THEN
+            NPANEL = NB
+        ELSE
+            NPANEL = MIN(NB*2, N)
+        END IF
+
+        IF( UPPER ) THEN
+            
+
+            IPIV( N ) = N
+            
+            DO 10 K = N, MAX(NPANEL, 1), -NPANEL
+                
+                IF( K.GE.NPANEL*2 ) THEN
+                    
+                CALL ZLASKTRF( UPLO, MODE, K, NB, A, LDA, IPIV, WORK, N, IINFO )
+
+                K2 = K-NPANEL
+                ELSE
+                    
+                PIV = IPIV( K )
+
+                CALL ZSKTF2( UPLO, MODE, K, A, LDA, IPIV, IINFO )
+
+                IPIV( K ) = PIV
+
+                K2 = 1
+                END IF
+                
+
+                IF( INFO.EQ.0 .AND. IINFO.GT.0 ) INFO = IINFO
+
+        
+                IF( K .LT. N ) THEN
+                DO 20 J=K-1, K2, -1
+                    CALL ZSWAP( N-K, A( J, K+1 ), LDA, A( IPIV( J ), K+1 ), LDA )
+        20            CONTINUE
+                END IF
+
+        10   CONTINUE
+    
+        ELSE
+            
+
+            IPIV( 1 ) = 1
+            
+            DO 30 K = 1, MIN(N-NPANEL+1, N-1), NPANEL
+                
+                IF( K.LE.N-NPANEL*2+1 ) THEN
+                    
+                CALL ZLASKTRF( UPLO, MODE, N-K+1, NB, A( K, K ), LDA, IPIV( K ), WORK, N, IINFO )
+
+                K2 = K + NPANEL
+                ELSE
+                    
+                PIV = IPIV( K )
+
+                CALL ZSKTF2( UPLO, MODE, N-K+1, A( K, K ), LDA, IPIV( K ), IINFO )
+
+                IPIV( K ) = PIV
+
+                K2 = N
+                END IF
+                
+                IF( INFO.EQ.0 .AND. IINFO.GT.0 ) INFO = IINFO + K - 1
+        
+                DO 40 J = K+1, K2
+                IPIV( J ) = IPIV( J ) + K - 1
+        40         CONTINUE
+
+    
+                IF( K .GT. 1 ) THEN
+                DO 50 J=K+1, K2
+                    CALL ZSWAP( K-1, A( J, 1 ), LDA, A( IPIV( J ), 1 ), LDA )
+        50            CONTINUE
+                END IF
+
+
+        30   CONTINUE
+    
+        END IF
+        
+        WORK( 1 ) = LWKOPT
+        RETURN
+
+    end subroutine ZSKTRF
+
+    subroutine ZSKTRD(UPLO, MODE, N, A, LDA, E, TAU, WORK, LWORK, INFO )
+
+        implicit none
+
+        CHARACTER          UPLO, MODE
+        INTEGER            INFO, LDA, LWORK, N
+        
+        DOUBLE PRECISION   E( * )
+        DOUBLE COMPLEX     A( LDA, * ), TAU( * ), WORK( * )
+
+        DOUBLE COMPLEX     CONE
+        PARAMETER          ( CONE = ( 1.0D+0, 0.0D+0 ) )
+        
+        LOGICAL            LQUERY, UPPER, NORMAL
+        INTEGER            I, IINFO, IWS, J, LDWORK, LWKOPT, NB, NBMIN, NX, STEP, NPANEL, NXPANEL
+        
+        EXTERNAL           XERBLA
+        
+        INTRINSIC          MAX
+        
+        LOGICAL            LSAME
+        INTEGER            ILAENV
+        EXTERNAL           LSAME, ILAENV
+        
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        NORMAL = LSAME( MODE, 'N' )
+
+        LQUERY = ( LWORK.EQ.-1 )
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.NORMAL .AND. .NOT.LSAME( MODE, 'P' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( .NOT.NORMAL .AND. MOD(N,2).NE.0 ) THEN
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        ELSE IF( LWORK.LT.1 .AND. .NOT.LQUERY ) THEN
+            INFO = -9
+        END IF
+        
+        IF( INFO.EQ.0 ) THEN
+            
+            NB = ILAENV( 1, 'ZHETRD', UPLO, N, -1, -1, -1 )
+            LWKOPT = N*NB
+            WORK( 1 ) = LWKOPT
+        END IF
+        
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'ZSKTRD', -INFO )
+            RETURN
+        ELSE IF( LQUERY ) THEN
+            RETURN
+        END IF
+        
+        IF( N.EQ.0 ) THEN
+            WORK( 1 ) = 1
+            RETURN
+        END IF
+        
+        NX = N
+        IWS = 1
+        IF( NB.GT.1 .AND. NB.LT.N ) THEN
+            
+            NX = MAX( NB, ILAENV( 3, 'ZHETRD', UPLO, N, -1, -1, -1 ) )
+            IF( NX.LT.N ) THEN
+                
+                LDWORK = N
+                IWS = LDWORK*NB
+                IF( LWORK.LT.IWS ) THEN
+                    
+                NB = MAX( LWORK / LDWORK, 1 )
+                NBMIN = ILAENV( 2, 'ZHETRD', UPLO, N, -1, -1, -1 )
+                IF( NB.LT.NBMIN .OR. NB.LE.1 ) NX = N
+                END IF
+            ELSE
+                NX = N
+            END IF
+        ELSE
+            NB = 1
+        END IF
+        
+
+        IF( .NOT.NORMAL ) THEN
+            STEP = 2
+        ELSE
+            STEP = 1
+        END IF
+
+        NPANEL = NB * STEP
+        NXPANEL = NX * STEP
+
+        IF( UPPER ) THEN
+            
+            DO 20 I = N, NXPANEL + NPANEL, -NPANEL
+                
+                CALL ZLASKTRD( UPLO, MODE, I, NB, A, LDA, E, TAU, WORK, LDWORK )
+        
+                CALL ZSKR2K( UPLO, 'No transpose', I-NPANEL, NB, CONE, A( 1, I-NPANEL+STEP ), &
+                &LDA*STEP, WORK, LDWORK, CONE, A, LDA )
+        
+                DO 10 J = I-NPANEL+1+STEP-1, I, STEP
+                A( J-1, J ) = E( J-1 )
+        10       CONTINUE
+        20    CONTINUE
+    
+            CALL ZSKTD2( UPLO, MODE, I, A, LDA, E, TAU, IINFO )
+        ELSE
+            
+            DO 40 I = 1, N - NXPANEL, NPANEL
+                
+                CALL ZLASKTRD( UPLO, MODE, N-I+1, NB, A( I, I ), LDA, E( I ), TAU( I ), WORK, LDWORK )
+        
+                CALL ZSKR2K( UPLO, 'No transpose', N-I-NPANEL+1, NB, CONE, A( I+NPANEL, I ), &
+                &LDA*STEP, WORK( NPANEL+1 ), LDWORK, CONE, A( I+NPANEL, I+NPANEL ), LDA )
+        
+                DO 30 J = I, I + NPANEL - 1, STEP
+                A( J+1, J ) = E( J )
+        30       CONTINUE
+        40    CONTINUE
+    
+            CALL ZSKTD2( UPLO, MODE, N-I+1, A( I, I ), LDA, E( I ), TAU( I ), IINFO )
+        END IF
+        
+        WORK( 1 ) = LWKOPT
+        RETURN
+
+    end subroutine ZSKTRD
+
+    subroutine ZSKPF10( UPLO, MTHD, N, A, LDA, PFAFF, IWORK, WORK, LWORK, RWORK, INFO)
+
+        implicit none
+
+        CHARACTER          UPLO, MTHD
+        INTEGER            INFO, LDA, LWORK, N
+        
+        INTEGER            IWORK( * )
+        DOUBLE PRECISION   RWORK( * )
+        DOUBLE COMPLEX     PFAFF( 2 )
+        DOUBLE COMPLEX     A( LDA, * ), WORK( * )
+
+        DOUBLE COMPLEX       ONE, ZERO
+        PARAMETER          ( ONE = (1.0D+0, 0.0D+0) )
+        PARAMETER          ( ZERO = (0.0D+0, 0.0D+0) )
+
+        DOUBLE PRECISION   RONE
+        PARAMETER          ( RONE = 1.0D+0 )
+
+        INTEGER            I,K
+        DOUBLE PRECISION   TEMP
+        
+        LOGICAL            LQUERY, UPPER, LTL
+
+        EXTERNAL           XERBLA
+        
+        LOGICAL            LSAME
+        EXTERNAL           LSAME
+        INTRINSIC          CONJG, CMPLX
+
+        INFO = 0
+        UPPER = LSAME( UPLO, 'U' )
+        LTL = LSAME( MTHD, 'P' )
+        LQUERY = ( LWORK.EQ.-1 )
+
+        IF( .NOT.UPPER .AND. .NOT.LSAME( UPLO, 'L' ) ) THEN
+            INFO = -1
+        ELSE IF( .NOT.LTL .AND. .NOT.LSAME( MTHD, 'H' ) ) THEN
+            INFO = -2
+        ELSE IF( N.LT.0 ) THEN
+            INFO = -3
+        ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+            INFO = -5
+        ELSE IF( LWORK.LT.1 .AND. .NOT.LQUERY ) THEN
+            INFO = -9
+        ELSE IF( MOD(N,2).NE.1 .AND. .NOT.LTL .AND. LWORK.LT.N .AND. .NOT.LQUERY ) THEN
+            INFO = -9
+        END IF
+
+        IF( INFO.EQ.0 .AND. LQUERY) THEN
+            IF( MOD(N,2).EQ.1 ) THEN
+                WORK(1) = 1
+            ELSE IF( LTL ) THEN
+                
+                CALL ZSKTRF( UPLO, "P", N, A, LDA, IWORK, WORK, LWORK, INFO )
+            ELSE
+                
+                CALL ZSKTRD( UPLO, "P", N, A, LDA, RWORK, WORK, WORK, LWORK, INFO)
+                WORK(1) = WORK(1) + N - 1
+            END IF
+        END IF
+        
+        IF( INFO.NE.0 ) THEN
+            CALL XERBLA( 'ZSKPF10', -INFO )
+            RETURN
+        ELSE IF( LQUERY ) THEN
+            RETURN
+        END IF
+
+        PFAFF( 1 ) = ONE
+        PFAFF( 2 ) = ZERO
+
+        
+        IF( N.EQ.0 ) THEN
+            RETURN
+        ELSE IF( MOD(N,2).EQ.1 ) THEN
+            PFAFF( 1 ) = ZERO
+            RETURN
+        END IF
+
+        IF( LTL ) THEN
+            
+            CALL ZSKTRF( UPLO, "P", N, A, LDA, IWORK, WORK, LWORK, INFO )
+
+            
+            IF( INFO .GT. 0 ) THEN
+                PFAFF( 1 ) = ZERO
+                PFAFF( 2 ) = ZERO
+                INFO = 0
+            ELSE
+                IF( UPPER ) THEN
+
+                DO 10 I = 1, N-1, 2
+                    CALL ZMUL10( PFAFF, A( I, I+1 ) )
+
+                    
+                    IF( IWORK( I ) .NE. I ) PFAFF( 1 ) = -PFAFF( 1 )
+        10            CONTINUE
+
+                ELSE
+
+                DO 20 I = 1, N-1, 2
+                    CALL ZMUL10( PFAFF, -A( I+1, I ) )
+
+                    
+                    IF( IWORK( I+1 ) .NE. I+1 ) PFAFF( 1 ) = -PFAFF( 1 )
+        20            CONTINUE
+
+                END IF
+            END IF
+        ELSE
+
+            
+            CALL ZSKTRD(UPLO, "P", N, A, LDA, RWORK, WORK, WORK( N ), LWORK-N+1, INFO)
+
+            IF( UPPER ) THEN
+                
+                DO 30 I = 1, N-1, 2
+                CALL ZMUL10( PFAFF, CMPLX(RWORK( I ),KIND=KIND(RWORK)) )
+
+                
+                TEMP = RONE
+                DO 40 K=1, I-1
+                    TEMP = TEMP + CONJG(A(K,I+1))*A(K,I+1)
+        40            CONTINUE
+
+                PFAFF( 1 ) = PFAFF( 1 ) * (ONE - WORK( I ) * TEMP)
+        30         CONTINUE
+
+            ELSE
+
+                
+                DO 50 I = 1, N-1, 2
+                CALL ZMUL10( PFAFF,-CMPLX(RWORK( I ),KIND=KIND(RWORK)))
+
+                
+                TEMP = RONE
+                DO 60 K=I+2, N
+                    TEMP = TEMP + CONJG(A(K,I))*A(K,I)
+        60            CONTINUE
+
+                PFAFF( 1 ) = PFAFF( 1 ) * (ONE - WORK( I ) * TEMP)
+        50         CONTINUE
+
+            END IF
+
+            
+            WORK( 1 ) = WORK( N ) + N-1
+        END IF
+
+        RETURN
+
+    end subroutine ZSKPF10
 
 end program PFAFFIAN
