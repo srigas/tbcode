@@ -10,7 +10,7 @@ program PFAFFIAN
     &nuzeroval, zparam, yparam, randparam, ROTAXIS(3), theta, magB, TOTSIGN, BINC, BFINAL
     real*8, allocatable, dimension(:) :: E0, ULCN, nu, nuzero, readnu
     real*8, allocatable, dimension(:,:) :: KPTS, TPTS, RLATT, BETA, LHOPS, PREFACTORS, HOPPVALS, &
-    &MAGBETS, PFSIGNS
+    &MAGBETS
     real*8, allocatable, dimension(:,:,:) :: RCONNECT
     complex*16 :: CI, IdentityPauli(2,2), xPauli(2,2), yPauli(2,2), zPauli(2,2)
     complex*16, allocatable, dimension(:) :: DELTA, readdelta
@@ -285,8 +285,6 @@ program PFAFFIAN
 
         BCOUNTER = 1
         BINC = (BFINAL-magB)/(BSTEPS-1)
-        allocate(PFSIGNS(BSTEPS,2))
-        PFSIGNS = 0.D0
     endif
 
     ! Configuration of ALTPFAF
@@ -294,12 +292,16 @@ program PFAFFIAN
     allocate(IWORK(4*NUMT))
     allocate(WORK(LWORK))
     allocate(RWORK(4*NUMT-1))
+
+    if (manyruns == 'y') then
+        open(1, file = 'Pfaffians.txt', action = 'write')
+    endif
     
     180 call MAGCHAIN(XINDEX,ROTAXIS,theta,magB,MAGBETS)
 
     checker = (ZINDEX-1)*(2*YINDEX+1)*XINDEX + XINDEX*YINDEX + 1
     do i = 1, XINDEX
-        DELTA(checker) = (0.D0,0.D0) ! <-- This needs to be checked
+        DELTA(checker) = (0.D0,0.D0)
         BETA(:,checker) = MAGBETS(:,i)
         checker = checker + 1
     end do
@@ -350,8 +352,7 @@ program PFAFFIAN
 
         if (BCOUNTER < BSTEPS) then
 
-            PFSIGNS(BCOUNTER,1) = magB
-            PFSIGNS(BCOUNTER,2) = TOTSIGN
+            write (1,*) magB, ',', TOTSIGN
 
             magB = magB + BINC
             BCOUNTER = BCOUNTER + 1
@@ -362,10 +363,6 @@ program PFAFFIAN
 
             goto 180
         else
-            open(1, file = 'Pfaffians.txt', action = 'write')
-                do i = 1, BSTEPS
-                    write (1,*) PFSIGNS(i,1), ',', PFSIGNS(i,2)
-                end do
             close(1)
         endif
 
