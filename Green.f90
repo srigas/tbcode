@@ -3232,9 +3232,9 @@ program GREEN
                 IMPPOINT = IMPPTS(1:3,i)
 
                 ! These find the R part
-                IMPPTSVAR(1,i) = FLOOR((1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_1)) ! n_1
-                IMPPTSVAR(2,i) = FLOOR((1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_2)) ! n_2
-                IMPPTSVAR(3,i) = FLOOR((1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_3)) ! n_3
+                IMPPTSVAR(1,i) = (1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_1) ! n_1
+                IMPPTSVAR(2,i) = (1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_2) ! n_2
+                IMPPTSVAR(3,i) = (1/((2.0*PI)))*DOT_PRODUCT(IMPPOINT,b_3) ! n_3
                 RPOINT = IMPPTSVAR(1,i)*a_1 + IMPPTSVAR(2,i)*a_2 + IMPPTSVAR(3,i)*a_3
 
                 ! The remainder is the IMPPOINT-R = τ'
