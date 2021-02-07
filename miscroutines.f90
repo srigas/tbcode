@@ -25,6 +25,6 @@ program MISCROUTINES
         end do
         write (1,*) '-----------'
         write (1,*) ' x   y   z'
-    close(1) ! Test commit
+    close(1)
 
 end program MISCROUTINES
