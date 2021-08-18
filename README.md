@@ -1,6 +1,12 @@
 # tbcode
 
-This repository contains the code files used for simulations concerning superconducting host systems with impurities embedded in or adsorbed on their surfaces. The code is split into the following parts:
+This repository contains the code files used for simulations concerning superconducting host systems with impurities embedded in or adsorbed on their surfaces.
+
+<p align="center">
+  <img width="500" src="http://users.uoa.gr/~srigas/GitHub/HostAndAdatoms.png">
+</p>
+
+The code is split into the following parts:
 
 ### 📌 Superconducting host calculations
 
