@@ -6,7 +6,7 @@ This repository contains the code files used for simulations concerning supercon
   <img width="500" src="http://users.uoa.gr/~srigas/GitHub/HostAndAdatoms.png">
 </p>
 
-The code is split into the following parts:
+This code is split into the following parts:
 
 ### 📌 Superconducting host calculations
 
